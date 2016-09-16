@@ -1,4 +1,4 @@
-# Install script for directory: /Users/Zheng/Documents/R.Urtasun/Flow
+# Install script for directory: /Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
@@ -35,5 +35,5 @@ endif()
 
 string(REPLACE ";" "\n" CMAKE_INSTALL_MANIFEST_CONTENT
        "${CMAKE_INSTALL_MANIFEST_FILES}")
-file(WRITE "/Users/Zheng/Documents/R.Urtasun/Flow/${CMAKE_INSTALL_MANIFEST}"
+file(WRITE "/Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/${CMAKE_INSTALL_MANIFEST}"
      "${CMAKE_INSTALL_MANIFEST_CONTENT}")

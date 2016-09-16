@@ -2,6 +2,7 @@ set(CMAKE_C_COMPILER "/Applications/Xcode.app/Contents/Developer/Toolchains/Xcod
 set(CMAKE_C_COMPILER_ARG1 "")
 set(CMAKE_C_COMPILER_ID "AppleClang")
 set(CMAKE_C_COMPILER_VERSION "7.3.0.7030031")
+set(CMAKE_C_COMPILER_WRAPPER "")
 set(CMAKE_C_STANDARD_COMPUTED_DEFAULT "11")
 set(CMAKE_C_COMPILE_FEATURES "c_function_prototypes;c_restrict;c_variadic_macros;c_static_assert")
 set(CMAKE_C90_COMPILE_FEATURES "c_function_prototypes")
