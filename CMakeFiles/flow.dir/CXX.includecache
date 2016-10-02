@@ -6,6 +6,24 @@
 
 #IncludeRegexTransform: 
 
+/Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/SGMFlow.cpp
+SGMFlow.h
+/Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/SGMFlow.h
+algorithm
+-
+math.h
+-
+nmmintrin.h
+-
+stack
+-
+stdexcept
+-
+vector
+-
+opencv2/opencv.hpp
+-
+
 /Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/SGMFlow.h
 png++/png.hpp
 -
@@ -22,6 +40,8 @@ cmath
 float.h
 -
 stdexcept
+-
+opencv2/opencv.hpp
 -
 
 /Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/SPSFlow.h
@@ -538,6 +558,8 @@ types.hpp
 
 /usr/local/include/png++/png.hpp
 png.h
+-
+string
 -
 config.hpp
 /usr/local/include/png++/config.hpp

@@ -1,4 +1,5 @@
 file(REMOVE_RECURSE
+  "CMakeFiles/flow.dir/SGMFlow.o"
   "CMakeFiles/flow.dir/SPSFlow.o"
   "CMakeFiles/flow.dir/flow.o"
   "flow.pdb"

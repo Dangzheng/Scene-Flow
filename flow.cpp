@@ -252,7 +252,6 @@ int main(int argc, char *argv[]) {
         }
         swap(epipole_x, temp_x);
         swap(epipole_y, temp_y);
-        std::cout << epipole_y.rows << "," << temp_y.rows << std::endl;
         meanStdDev(epipole_x, epipole_mean_x, epipole_var_x);
         meanStdDev(epipole_y, epipole_mean_y, epipole_var_y);
         std::cout << "epipole coordinate: (" << epipole_mean_x << ","
@@ -282,8 +281,6 @@ int main(int argc, char *argv[]) {
         float square_root = sqrt(pow(x, 2) + pow(y, 2));
         x = x / square_root;
         y = y / square_root;
-        std::cout << epipole_pt.x << "," << pt1_inlier[i_t].y << "," << x << ","
-                  << y << "," << square_root << std::endl;
         float d_epipolar = 40;
         x = d_epipolar * x;
         y = d_epipolar * y;
@@ -291,8 +288,8 @@ int main(int argc, char *argv[]) {
         incremental.x = pt1_inlier[i_t].x + x;
         incremental.y = pt1_inlier[i_t].y + y;
         cv::circle(leftImage1, incremental, 5, color);
-        cv::imshow("one of the leftImagePlus's epiline", leftImage1);
-        waitKey(0);
+        // cv::imshow("one of the leftImagePlus's epiline", leftImage1);
+        // waitKey(0);
       }
     }
     //----------------------------------------------------------------------
@@ -371,7 +368,7 @@ int main(int argc, char *argv[]) {
   Mat U, W, Vt, Rotation;
   SVD::compute(EssentialMat, W, U, Vt);
   // std::cout << "E:" << std::endl << EssentialMat << std::endl;
-  //���照计算机视觉中的多视图几何（9.14）公式写的。
+  // 照计算机视觉中的多视图几何（9.14）公式写的。
   W = (Mat_<float>(3, 3) << 0, -1, 0, 1, 0, 0, 0, 0, 1);
   Rotation = U * W * Vt;
   // std::cout << "Rotation:" << std::endl << Rotation << std::endl;
@@ -381,8 +378,6 @@ int main(int argc, char *argv[]) {
   Mat vector_Rot;
   Rodrigues(Rotation, vector_Rot);
   std::cout << "Rotation_vector:" << std::endl << vector_Rot << std::endl;
-  //现在仅仅是得到了�������过SIFT�����LMeds计���得到的相�����������矩阵。
-  //接下来还要利用极线几���的知识来把这个参数优化一下。（先搁置优化参数这一步）
 
   // SGMFlow部分，cost computation
   png::image<png::rgb_pixel> leftImage(leftImageFilename);
@@ -399,11 +394,9 @@ int main(int argc, char *argv[]) {
   png::image<png::gray_pixel_16> vzratioImage;
   std::vector<std::vector<double>> vzratioPlaneParameters;
   std::vector<std::vector<int>> boundaryLabels;
-  /*
- flow.compute(superpixelTotal, leftImage, leftplusImage, segmentImage,
-               vzratioImage, vzratioPlaneParameters,
-               boundaryLabels); //完成所有���计算的步骤。
-*/
+
+  flow.compute(superpixelTotal, leftImage, leftplusImage, segmentImage,
+               vzratioImage, vzratioPlaneParameters, boundaryLabels);
 
   return 0;
 }

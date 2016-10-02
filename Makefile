@@ -124,6 +124,21 @@ flow/fast:
 .PHONY : flow/fast
 
 # target to build an object file
+SGMFlow.o:
+	$(MAKE) -f CMakeFiles/flow.dir/build.make CMakeFiles/flow.dir/SGMFlow.o
+.PHONY : SGMFlow.o
+
+# target to preprocess a source file
+SGMFlow.i:
+	$(MAKE) -f CMakeFiles/flow.dir/build.make CMakeFiles/flow.dir/SGMFlow.i
+.PHONY : SGMFlow.i
+
+# target to generate assembly for a file
+SGMFlow.s:
+	$(MAKE) -f CMakeFiles/flow.dir/build.make CMakeFiles/flow.dir/SGMFlow.s
+.PHONY : SGMFlow.s
+
+# target to build an object file
 SPSFlow.o:
 	$(MAKE) -f CMakeFiles/flow.dir/build.make CMakeFiles/flow.dir/SPSFlow.o
 .PHONY : SPSFlow.o
@@ -162,6 +177,9 @@ help:
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
 	@echo "... flow"
+	@echo "... SGMFlow.o"
+	@echo "... SGMFlow.i"
+	@echo "... SGMFlow.s"
 	@echo "... SPSFlow.o"
 	@echo "... SPSFlow.i"
 	@echo "... SPSFlow.s"

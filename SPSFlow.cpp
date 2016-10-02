@@ -5,6 +5,7 @@
 #include <float.h>
 #include <stdexcept>
 
+#include <opencv2/opencv.hpp>
 // Default parameters
 const double SPSFLOW_DEFAULT_OUTPUT_VZ_RATIO = 256.0;
 const int SPSFLOW_DEFAULT_OUTER_ITERATION_COUNT = 10;
@@ -210,6 +211,6 @@ void SPSFlow::setLabImage(const png::image<png::rgb_pixel> &leftImage) {
 void SPSFlow::computeInitialVZratioImage(
     const png::image<png::rgb_pixel> &leftImage,
     const png::image<png::rgb_pixel> &leftplusImage) {
-  // SGMFlow sgm;
-  // sgm.compute(leftImage, leftplusImage, initialVZratioImage_);
+  SGMFlow sgm;
+  sgm.compute(leftImage, leftplusImage, initialVZratioImage_);
 }

@@ -6,6 +6,8 @@
 #include <stdexcept>
 
 #include <vector>
+
+#include <opencv2/opencv.hpp>
 // Default parameters
 const int SGMFLOW_DEFAULT_VZRATIO_TOTAL = 256;
 const double SGMFLOW_DEFAULT_VZRATIO_FACTOR = 256;
@@ -206,7 +208,7 @@ void SGMFlow::computeLeftCostImage(
       _mm_malloc(widthStep_ * height_ * sizeof(unsigned char), 16));
   //此处用sobel算子来处理图像，sobel处理完的图像留下的都是图像的边缘，对左图像检测水平方向的边缘，对左plus检测垂直方向的边缘。
   computeCappedSobelIamge(leftGrayscaleImage, false, leftSobelImage);
-  computeCappedSobelIamge(leftplusGrayscaleImage, false, leftSobelImage);
+  computeCappedSobelIamge(leftplusGrayscaleImage, true, leftplusSobelImage);
 
   int *leftCensusImage =
       reinterpret_cast<int *>(malloc(width_ * height_ * sizeof(int)));
@@ -307,7 +309,7 @@ void SGMFlow::calcTopRowCost(unsigned char *&leftSobelRow, int *&leftCensusRow,
     unsigned short *rowAggregatedCostCurrent =
         rowAggregatedCost_ + rowAggregatedCostIndex * width_ * vzratioTotal_;
     //这个rowAggregatedCost_是哪里来的?算了，计算SAD的时候也没有用到那就先搁置不管了。
-    calcPixelwiseSAD(leftSobelRow, leftplusSobelRow);
+    calcPixelwiseSAD(leftSobelRow, leftplusSobelRow, 0);
   }
 }
 
@@ -316,6 +318,7 @@ void SGMFlow::calcPixelwiseSAD(const unsigned char *leftSobelRow,
   //这个函数的标注是计算像素级别的SAD cost。
   //如果是计算顶行的话，那么y就设置成0
   calcHalfPixelLeftPlus(leftplusSobelRow); //为什么要用sobel来计算半像素？
+
   double wx_t = 0.22621486;
   double wy_t = 0.061689742;
   double wz_t = 1.3907996;
@@ -346,11 +349,8 @@ void SGMFlow::calcPixelwiseSAD(const unsigned char *leftSobelRow,
     // 再多说一些这里的实现思路:首先，计算极点的时候我是直接在图像上面计算的极点，就是两条
     // 极线的交点，所以这个坐标直接就是极线的坐标。延极线方向的移动只需要目标点坐标减去极
     // 点坐标求得单位方向向量之后，就可以沿着极线方向运动，他的那个d注意看，是leftplus减
-    // left的距离，所以如果d是的正的话，他是背离极点运动的，所以一定要以极点作为起点，做
-    // 为被减数。
-    // 这里面有一个非常麻烦的地方就是作者在文章中的推导是在相机坐标系���������������行的推导，也就是那个d
-    // 并不是（u,v）上面的像素坐标平移，所以要乘以焦距。
-    //
+    // left的距离，所以如果d是的正的话，他是背离极点运动的，所以一定要以极点作为起点。
+    // 这里面有一个trick：在文章中的推导是在相机坐标系下，d不是（u,v）上面的像素坐标平移，所以要乘以焦距。
     // 第二点，这个代码是参照双目立体视觉匹配写的，所以他在写的时候就是一行一行计算，因为本
     // 身双目立体视觉的极线就是平行于x轴的，但是光流里面极线不平行，暂时按照极线几何的路数
     // 走把。
@@ -364,10 +364,9 @@ void SGMFlow::calcPixelwiseSAD(const unsigned char *leftSobelRow,
     for (int wp = 0; wp <= vzratioTotal_; ++wp) {
       // 这里的d应该是指的disparity，将其改写成vzratio。
       //
-      int leftplusCenterValue = leftplusSobelRow[width_ - 1 - x + wp];
-      int leftplusMinValue = halfPixelLeftPlusMin_[width_ - 1 - x + wp];
-      int leftplusMaxValue = halfPixelLeftPlusMax_[width_ - 1 - x + wp];
-
+      //这个取值有问题，因为flow、应该是先计算位置，然后再进行取值，这个地方如果取整数值的话，
+      //这个点不一定在极线上面，讲道理这里为了保证这个点在极线上应该进行一个插值处理，但是现在
+      //先按照整数来取值
       double uwTransX, uwTransY;
       // calculate the rotation
       uwTransX = (x - cx) +
@@ -380,22 +379,44 @@ void SGMFlow::calcPixelwiseSAD(const unsigned char *leftSobelRow,
 
       double distanceRRhat =
           distancePEpi * wp * (vMax / n) / (1 - wp * (vMax / n));
+      std::cout << "reach here! dis" << std::endl;
+
+      std::cout << "distanceRRhat: " << distanceRRhat << std::endl;
+      //这个位置面临的问题是，当vzration不断增加时，其背离极点的距离越来越远，可能会超出图像的边缘
+      //那么这个时候，就会报错。在立体视觉问题中这个很好判断，因为只要给横坐标上限制就可以了，但是现
+      //在面临的问题是，如何提出一个泛化的限制。
+      //还存在的一个问题就是：提出了限制之后，剩余灰度等级的代价该如何填充。
       double directionX = x - epipoleX;
       double directionY = y - epipoleY;
       directionX = directionX / sqrt(pow(directionX, 2) + pow(directionY, 2));
       directionY = directionY / sqrt(pow(directionX, 2) + pow(directionY, 2));
-      double xPuls = x + uwTransX + directionX * distanceRRhat;
-      double yPlus = y + uwTransY + directionY * distanceRRhat;
+      int xPlus = x + uwTransX + directionX * distanceRRhat;
+      int yPlus = y + uwTransY + directionY * distanceRRhat;
       // 现在求出了根据VZ-ratio计算的，left图像上一个点，在leftplus图像上的对应点。
-
+      // 这个点式计算出来的理论值点，并不是真真切切在计算的sobelImage上面的点。
+      // 这个位置先看看计算结果，如果不好的话，以后可能还要给一个插值，现在先给一个向下取整
+      // widthStep_ * y + width_ - x
+      std::cout << uwTransX + directionX * distanceRRhat << std::endl;
+      std::cout << "(" << x << "," << y << ")" << std::endl;
+      int leftplusCenterValue =
+          leftplusSobelRow[widthStep_ * yPlus + width_ - xPlus - 1];
+      int leftplusMinValue =
+          halfPixelLeftPlusMin_[widthStep_ * yPlus + width_ - xPlus - 1];
+      int leftplusMaxValue =
+          halfPixelLeftPlusMax_[widthStep_ * yPlus + width_ - xPlus - 1];
+      // 可以看到这个位置取点直接就是按位置取点
       int costLtoR = std::max(0, leftCenterValue - leftplusMaxValue);
       costLtoR = std::max(costLtoR, leftplusMinValue - leftCenterValue);
       int costRtoL = std::max(0, leftplusCenterValue - leftMaxValue);
       costRtoL = std::max(costRtoL, leftMinValue - leftplusCenterValue);
       int costValue = std::min(costLtoR, costRtoL);
-
-      // pixelwiseCostRow_[vzratioTotal_ * x + wp] =
+      //上面的部分是没有考量过边界条件和优化的一个cost计算
+      //计算完cost之后将其存贮
+      pixelwiseCostRow_[vzratioTotal_ * x + wp] = costValue;
+      std::cout << "wp = " << wp << "///costValue: " << costValue << std::endl;
     }
+    std::cout << "reach here! Finish on point cost calculation" << std::endl;
+    cv::waitKey(0);
   }
 }
 
