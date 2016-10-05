@@ -25,18 +25,24 @@ public:
                png::image<png::gray_pixel_16> &segmentImage,
                png::image<png::gray_pixel_16> &vzratioImage,
                std::vector<std::vector<double>> &vzratioPlaneParameters,
-               std::vector<std::vector<int>> &boundaryLabels);
+               std::vector<std::vector<int>> &boundaryLabels,
+               std::string leftImageFilename,
+               std::string leftplusImageFilename);
 
 private:
   void allocateBuffer();
   void freeBuffer();
 
   void setInputData(const png::image<png::rgb_pixel> &leftImage,
-                    const png::image<png::rgb_pixel> &leftplusImage);
+                    const png::image<png::rgb_pixel> &leftplusImage,
+                    std::string leftImageFilename,
+                    std::string leftplusImageFilename);
   void setLabImage(const png::image<png::rgb_pixel> &leftImage);
   void
   computeInitialVZratioImage(const png::image<png::rgb_pixel> &leftImage,
-                             const png::image<png::rgb_pixel> &leftplusImage);
+                             const png::image<png::rgb_pixel> &leftplusImage,
+                             std::string leftImageFilename,
+                             std::string leftplusImageFilename);
   // Parameter
   double outputVZRatio_;
 

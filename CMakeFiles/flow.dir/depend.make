@@ -23,7 +23,10 @@ CMakeFiles/flow.dir/SGMFlow.o: /usr/local/include/opencv2/highgui/highgui_c.h
 CMakeFiles/flow.dir/SGMFlow.o: /usr/local/include/opencv2/imgproc/imgproc.hpp
 CMakeFiles/flow.dir/SGMFlow.o: /usr/local/include/opencv2/imgproc/imgproc_c.h
 CMakeFiles/flow.dir/SGMFlow.o: /usr/local/include/opencv2/imgproc/types_c.h
+CMakeFiles/flow.dir/SGMFlow.o: /usr/local/include/opencv2/legacy/legacy.hpp
 CMakeFiles/flow.dir/SGMFlow.o: /usr/local/include/opencv2/ml/ml.hpp
+CMakeFiles/flow.dir/SGMFlow.o: /usr/local/include/opencv2/nonfree/features2d.hpp
+CMakeFiles/flow.dir/SGMFlow.o: /usr/local/include/opencv2/nonfree/nonfree.hpp
 CMakeFiles/flow.dir/SGMFlow.o: /usr/local/include/opencv2/objdetect/objdetect.hpp
 CMakeFiles/flow.dir/SGMFlow.o: /usr/local/include/opencv2/opencv.hpp
 CMakeFiles/flow.dir/SGMFlow.o: /usr/local/include/opencv2/opencv_modules.hpp
@@ -87,7 +90,10 @@ CMakeFiles/flow.dir/SPSFlow.o: /usr/local/include/opencv2/highgui/highgui_c.h
 CMakeFiles/flow.dir/SPSFlow.o: /usr/local/include/opencv2/imgproc/imgproc.hpp
 CMakeFiles/flow.dir/SPSFlow.o: /usr/local/include/opencv2/imgproc/imgproc_c.h
 CMakeFiles/flow.dir/SPSFlow.o: /usr/local/include/opencv2/imgproc/types_c.h
+CMakeFiles/flow.dir/SPSFlow.o: /usr/local/include/opencv2/legacy/legacy.hpp
 CMakeFiles/flow.dir/SPSFlow.o: /usr/local/include/opencv2/ml/ml.hpp
+CMakeFiles/flow.dir/SPSFlow.o: /usr/local/include/opencv2/nonfree/features2d.hpp
+CMakeFiles/flow.dir/SPSFlow.o: /usr/local/include/opencv2/nonfree/nonfree.hpp
 CMakeFiles/flow.dir/SPSFlow.o: /usr/local/include/opencv2/objdetect/objdetect.hpp
 CMakeFiles/flow.dir/SPSFlow.o: /usr/local/include/opencv2/opencv.hpp
 CMakeFiles/flow.dir/SPSFlow.o: /usr/local/include/opencv2/opencv_modules.hpp

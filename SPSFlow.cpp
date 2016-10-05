@@ -7,7 +7,8 @@
 
 #include <opencv2/opencv.hpp>
 // Default parameters
-const double SPSFLOW_DEFAULT_OUTPUT_VZ_RATIO = 256.0;
+const double SPSFLOW_DEFAULT_OUTPUT_VZ_RATIO =
+    256.0; //因为128已经能够满足移动到图像边缘的取值了。
 const int SPSFLOW_DEFAULT_OUTER_ITERATION_COUNT = 10;
 const int SPSFLOW_DEFAULT_INNER_ITERATION_COUNT = 10;
 const double SPSFLOW_DEFAULT_POSITION_WEIGHT = 500.0;
@@ -97,6 +98,7 @@ void SPSFlow::setPenaltyParameter(const double hingePenalty,
   occlusionPenalty_ = occlusionPenalty;
   impossiblePenalty_ = impossiblePenalty;
 }
+
 // ---------以上确认参数的函数，下面开始计算的函数-----------
 void SPSFlow::compute(const int superpixelTotal,
                       const png::image<png::rgb_pixel> &leftImage,
@@ -104,7 +106,9 @@ void SPSFlow::compute(const int superpixelTotal,
                       png::image<png::gray_pixel_16> &segmentImage,
                       png::image<png::gray_pixel_16> &vzratioImage,
                       std::vector<std::vector<double>> &vzratioPlaneParameters,
-                      std::vector<std::vector<int>> &boundaryLabels) {
+                      std::vector<std::vector<int>> &boundaryLabels,
+                      std::string leftImageFilename,
+                      std::string leftplusImageFilename) {
   if (superpixelTotal < 2) {
     throw std::invalid_argument(
         "[SPSFlow::compute] the number of superpixels is less than 2");
@@ -119,7 +123,8 @@ void SPSFlow::compute(const int superpixelTotal,
 
   allocateBuffer();
 
-  setInputData(leftImage, leftplusImage);
+  setInputData(leftImage, leftplusImage, leftImageFilename,
+               leftplusImageFilename);
 
   freeBuffer();
 }
@@ -146,10 +151,13 @@ void SPSFlow::freeBuffer() {
 
 //---------compute 中应用的函数-----------
 void SPSFlow::setInputData(const png::image<png::rgb_pixel> &leftImage,
-                           const png::image<png::rgb_pixel> &leftplusImage) {
+                           const png::image<png::rgb_pixel> &leftplusImage,
+                           std::string leftImageFilename,
+                           std::string leftplusImageFilename) {
   setLabImage(leftImage);
   //如果是图片的预处理步骤的话为什么只针对左图进行处理呢？
-  computeInitialVZratioImage(leftImage, leftplusImage);
+  computeInitialVZratioImage(leftImage, leftplusImage, leftImageFilename,
+                             leftplusImageFilename);
 }
 
 void SPSFlow::setLabImage(const png::image<png::rgb_pixel> &leftImage) {
@@ -210,7 +218,10 @@ void SPSFlow::setLabImage(const png::image<png::rgb_pixel> &leftImage) {
 
 void SPSFlow::computeInitialVZratioImage(
     const png::image<png::rgb_pixel> &leftImage,
-    const png::image<png::rgb_pixel> &leftplusImage) {
+    const png::image<png::rgb_pixel> &leftplusImage,
+    std::string leftImageFilename, std::string leftplusImageFilename) {
   SGMFlow sgm;
-  sgm.compute(leftImage, leftplusImage, initialVZratioImage_);
+  sgm.setVZRatioTotal(128);
+  sgm.compute(leftImage, leftplusImage, initialVZratioImage_, leftImageFilename,
+              leftplusImageFilename);
 }

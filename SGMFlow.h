@@ -2,6 +2,10 @@
 
 #include <png++/png.hpp>
 
+#include <opencv2/legacy/legacy.hpp>
+#include <opencv2/nonfree/nonfree.hpp>
+#include <opencv2/opencv.hpp>
+
 class SGMFlow {
 public:
   SGMFlow();
@@ -18,7 +22,8 @@ public:
 
   void compute(const png::image<png::rgb_pixel> &leftImage,
                const png::image<png::rgb_pixel> &leftplusImage,
-               float *vzratioImage);
+               float *vzratioImage, std::string leftImageFilename,
+               std::string leftplusImageFilename);
 
 private:
   void initialize(const png::image<png::rgb_pixel> &leftImage,
@@ -42,9 +47,14 @@ private:
   void calcTopRowCost(unsigned char *&leftSobelRow, int *&leftCensusRow,
                       unsigned char *&leftplusSobelRow, int *&leftplusCensusRow,
                       unsigned short *costImageRow);
+  void calcRowCosts(unsigned char *&leftSobelRow, int *&leftCensusRow,
+                    unsigned char *&leftplusSobelRow, int *&leftplusCensusRow,
+                    unsigned short *costImageRow);
   void calcPixelwiseSAD(const unsigned char *leftSobelRow,
                         const unsigned char *leftplusSobelRow, int y = 0);
   void calcHalfPixelLeftPlus(const unsigned char *leftplusSobelRow);
+  void addPixelwiseHamming(const int *leftCensusRow,
+                           const int *leftplusCensusRow);
 
   // Parameters(Parameters
   // 和Data这些变量名字的定义都是直接照搬的，出现问题再考虑是什么问题。)
@@ -77,4 +87,16 @@ private:
   int pathCostBufferSize_;
   int totalBufferSize_;
   short *sgmBuffer_;
+
+  // add by Dangzheng
+  void calcEpipoleRotaionVector(std::string leftImageFilename,
+                                std::string leftplusImageFilename);
+  bool interscetion(cv::Point2f &inter_pt, cv::Point2f o1, cv::Point2f p1,
+                    cv::Point2f o2, cv::Point2f p2);
+  double wx_t;
+  double wy_t;
+  double wz_t;
+  double f = 721.53770;
+  double epipoleX;
+  double epipoleY;
 };

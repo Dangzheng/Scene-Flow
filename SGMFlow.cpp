@@ -7,7 +7,11 @@
 
 #include <vector>
 
-#include <opencv2/opencv.hpp>
+// #include <iomanip> 控制输出精度时候使用
+// 包含下面这个头文件可以使得_mm_popcnt_u32，在代码美化的时候不报错，
+// 但是编译通过不了，所以我换了一个不受平台限制的。
+// #include <popcntintrin.h>
+
 // Default parameters
 const int SGMFLOW_DEFAULT_VZRATIO_TOTAL = 256;
 const double SGMFLOW_DEFAULT_VZRATIO_FACTOR = 256;
@@ -93,12 +97,14 @@ void SGMFlow::setConsistencyThreshold(const int consistencyThreshold) {
   }
   consistencyThreshold_ = consistencyThreshold;
 }
+
 //------------------------------------------------------------------------
 void SGMFlow::compute(const png::image<png::rgb_pixel> &leftImage,
                       const png::image<png::rgb_pixel> &leftplusImage,
-                      float *vzratioImage) {
+                      float *vzratioImage, std::string leftImageFilename,
+                      std::string leftplusImageFilename) {
   initialize(leftImage, leftplusImage);
-
+  calcEpipoleRotaionVector(leftImageFilename, leftplusImageFilename);
   computeCostImage(leftImage, leftplusImage);
 }
 
@@ -166,6 +172,363 @@ void SGMFlow::freeDataBuffer() {
   _mm_free(halfPixelLeftPlusMax_);
   _mm_free(sgmBuffer_);
 }
+void SGMFlow::calcEpipoleRotaionVector(std::string leftImageFilename,
+                                       std::string leftplusImageFilename) {
+  cv::Mat leftImage, leftplusImage;
+  std::cout << "hello zheng~ I reach here~lalala" << std::endl;
+  leftImage = cv::imread(leftImageFilename, 1);
+  leftplusImage = cv::imread(leftplusImageFilename, 1);
+  // cv::imshow("Flow_image_left", leftImage);
+  // cv::imshow("Flow_image_leftplus", leftplusImage);
+  // cv::waitKey(0);
+  // SIFT
+  cv::SiftFeatureDetector siftdtc;
+  cv::vector<cv::KeyPoint> kp0, kp1;
+  cv::Mat Keypoint0, Keypoint1;
+
+  siftdtc.detect(leftImage, kp0);
+  // drawKeypoints(leftImage, kp0, Keypoint0);
+  // imshow("leftImage_keypoints",Keypoint0);
+  // waitKey(0);
+  /*
+  vector<KeyPoint>::iterator itvc;
+
+  for(itvc=kp0.begin();itvc!=kp0.end();itvc++)
+  {
+      std::cout<<"angle:"<<itvc->angle<<"\t"<<itvc->class_id<<"\t"<<itvc->octave<<"\t"<<itvc->pt<<"\t"<<itvc->response<<std::endl;
+  }
+  */
+  // angle表示特征点的方向，负值表示不使用
+  // class_id表示聚类的ID
+  // pt 表示坐标
+
+  siftdtc.detect(leftplusImage, kp1);
+  // drawKeypoints(leftplusImage, kp1, Keypoint1);
+  cv::SiftDescriptorExtractor extractor;
+  cv::Mat descriptor0, descriptor1;
+  cv::BruteForceMatcher<cv::L2<float>> matcher;
+  cv::vector<cv::DMatch> matches;
+  cv::Mat MatchesImage;
+  extractor.compute(leftImage, kp0, descriptor0);
+  extractor.compute(leftplusImage, kp1, descriptor1);
+  // imshow("descriptor",descriptor0);
+  // waitKey(0);
+  // std::cout<<std::endl<<descriptor0<<std::endl;
+  matcher.match(descriptor0, descriptor1, matches);
+  cv::drawMatches(leftImage, kp0, leftplusImage, kp1, matches, MatchesImage);
+  cv::vector<int> compression_params;
+  compression_params.push_back(CV_IMWRITE_PNG_COMPRESSION);
+  compression_params.push_back(9);
+  imwrite("before.png", MatchesImage, compression_params);
+  // imshow("Match",MatchesImage);
+  // waitKey(0);
+
+  // LMeds或者8-points估计fundamental matrix
+
+  // kp0,kp1为feature points需要将其转换array
+  int ptCount = matches.size();
+  cv::vector<cv::Point2f> points0(ptCount);
+  cv::vector<cv::Point2f> points1(ptCount);
+  cv::Point2f pt;
+  for (int i = 0; i < ptCount; i++) {
+    pt = kp0[matches[i].queryIdx].pt;
+    points0[i].x = pt.x;
+    points0[i].y = pt.y;
+    pt = kp1[matches[i].trainIdx].pt;
+    points1[i].x = pt.x;
+    points1[i].y = pt.y;
+  }
+
+  //根据第一次的计算结果去除outlier和误差大的点。
+  cv::Mat FundamentalMatrix;
+  cv::vector<uchar> LMedsStatus;
+  FundamentalMatrix =
+      findFundamentalMat(points0, points1, CV_FM_LMEDS, 3, 0.99, LMedsStatus);
+  int Outliers = 0;
+  for (int i = 0; i < ptCount; i++) {
+    if (LMedsStatus[i] == 0) {
+      Outliers++;
+    }
+  }
+  // std::cout << "Outliers:" << Outliers << std::endl;
+  // std::cout << "ptCount:" << ptCount << std::endl;
+  //根据点的status来去除outlier。
+
+  cv::vector<cv::Point2f> pt0_inlier;
+  cv::vector<cv::Point2f> pt1_inlier;
+  cv::vector<cv::DMatch> InlierMatches;
+  int InlierCount = ptCount - Outliers;
+  InlierMatches.resize(InlierCount);
+  pt0_inlier.resize(InlierCount);
+  pt1_inlier.resize(InlierCount);
+  InlierCount = 0;
+  for (int i = 0; i < ptCount; i++) {
+    if (LMedsStatus[i] != 0) {
+      pt0_inlier[InlierCount].x = points0[i].x;
+      pt0_inlier[InlierCount].y = points0[i].y;
+      pt1_inlier[InlierCount].x = points1[i].x;
+      pt1_inlier[InlierCount].y = points1[i].y;
+      InlierMatches[InlierCount].queryIdx = InlierCount;
+      InlierMatches[InlierCount].trainIdx = InlierCount;
+      InlierCount++;
+    }
+  }
+  FundamentalMatrix =
+      findFundamentalMat(pt0_inlier, pt1_inlier, CV_FM_LMEDS, 3, 0.99);
+  cv::vector<cv::KeyPoint> key0(InlierCount);
+  cv::vector<cv::KeyPoint> key1(InlierCount);
+  cv::KeyPoint::convert(pt0_inlier, key0);
+  cv::KeyPoint::convert(pt1_inlier, key1);
+  drawMatches(leftImage, key0, leftplusImage, key1, InlierMatches,
+              MatchesImage);
+  imwrite("after.png", MatchesImage, compression_params);
+  // imshow("Match",MatchesImage);
+  // waitKey(0);
+  /*
+  FileStorage fs("FundamentalMat.xml", FileStorage::WRITE);
+  fs << "fundamentalMat" <<FundamentalMatrix;
+  fs.release();
+  */
+
+  // CALIBRATION QUALITY CHECK
+  // epipolar geometry constraint: m2^t*F*m1=0
+  double err = 0;
+  int npoints = 0;
+  int nimages = 1;
+  cv::vector<cv::Vec3f> lines[2];
+  cv::vector<cv::vector<cv::Point2f>> imagePoints[2];
+  imagePoints[0].resize(nimages);
+  imagePoints[1].resize(nimages);
+  imagePoints[0][0] = pt0_inlier;
+  imagePoints[1][0] = pt1_inlier;
+  int err_count = 0;
+  cv::vector<cv::Point2f> errpt_0;
+  cv::vector<cv::Point2f> errpt_1;
+  errpt_0.resize(InlierCount);
+  errpt_1.resize(InlierCount);
+  for (int i = 0; i < nimages; i++) {
+    cv::Mat imgpt[2];
+    int npt = (int)imagePoints[0][i].size();
+
+    for (int k = 0; k < 2; k++) {
+      imgpt[k] = cv::Mat(imagePoints[k][i]);
+      computeCorrespondEpilines(imgpt[k], k + 1, FundamentalMatrix, lines[k]);
+      //绘制极线
+      /*
+      RNG &rng = theRNG();
+      if (k == 1) {
+        for (int i = 0; i < pt1_inlier.size(); i++) {
+          Scalar color = Scalar(rng(256), rng(256), rng(256));
+          cv::circle(leftplusImage, pt1_inlier[i], 5, color);
+          cv::line(leftplusImage, Point(0, -lines[k][i][2] / lines[k][i][1]),
+                   Point(leftplusImage.cols,
+                         -(lines[k][i][2] + lines[k][i][0] * leftImage.cols) /
+                             lines[k][i][1]),
+                   color);
+
+          cv::imshow("leftImagePlus's epiline", leftplusImage);
+          waitKey(0);
+        }
+      }
+      */
+      //计算右图像的极点，利用的是两条直线的交点，所有的匹配点对两两成对，然后计算出一堆
+      //极点的备选点，计算这些点的均值和方差用于滤除outlier
+      cv::Mat epipole_mean_x, epipole_mean_y;
+      if (k == 1) {
+        cv::Point2f inter_pt, o0, o1, p0, p1;
+        cv::Mat epipole_mean_x, epipole_var_x, epipole_var_y;
+        cv::Mat epipole_x(pt1_inlier.size() - 1, 1, CV_32F);
+        cv::Mat epipole_y(pt1_inlier.size() - 1, 1, CV_32F);
+
+        for (int i = 0; i < pt1_inlier.size() - 1; i++) {
+          o0.x = 0;
+          o0.y = -lines[k][i][2] / lines[k][i][1];
+          p0.x = leftplusImage.cols;
+          p0.y = -(lines[k][i][2] + lines[k][i][0] * leftImage.cols) /
+                 lines[k][i][1];
+          o1.x = 0;
+          o1.y = -lines[k][i + 1][2] / lines[k][i + 1][1];
+          p1.x = leftplusImage.cols;
+          p1.y = -(lines[k][i + 1][2] + lines[k][i + 1][0] * leftImage.cols) /
+                 lines[k][i + 1][1];
+          interscetion(inter_pt, o0, p0, o1, p1);
+          epipole_x.at<float>(i, 0) = inter_pt.x;
+          epipole_y.at<float>(i, 0) = inter_pt.y;
+
+          /*
+          Scalar color = Scalar(rng(256), rng(256), rng(256));
+          cv::circle(leftplusImage, inter_pt, 5, color);
+          imshow("leftImagePlus's epipole", leftplusImage);
+          waitKey(0);
+          std::cout << "cross point is:" << inter_pt.x << "," << inter_pt.y
+                    << std::endl;
+          */
+        }
+        meanStdDev(epipole_x, epipole_mean_x, epipole_var_x);
+        meanStdDev(epipole_y, epipole_mean_y, epipole_var_y);
+        cv::Mat temp_x, temp_y;
+        for (int i = 0; i < epipole_x.rows; i++) {
+
+          if (fabs(epipole_x.at<float>(i, 0) -
+                   epipole_mean_x.at<double>(0, 0)) < 0.1) {
+            temp_x.push_back(epipole_x.at<float>(i, 0));
+          }
+          if (fabs(epipole_y.at<float>(i, 0) -
+                   epipole_mean_y.at<double>(0, 0)) < 0.1) {
+            temp_y.push_back(epipole_y.at<float>(i, 0));
+          }
+        }
+        swap(epipole_x, temp_x);
+        swap(epipole_y, temp_y);
+        meanStdDev(epipole_x, epipole_mean_x, epipole_var_x);
+        meanStdDev(epipole_y, epipole_mean_y, epipole_var_y);
+        std::cout << "epipole coordinate: (" << epipole_mean_x << ","
+                  << epipole_mean_y << ")" << std::endl;
+        std::cout << "epipole coordinate variance:" << epipole_var_x << "/"
+                  << epipole_var_y << std::endl;
+        epipoleX = epipole_mean_x.at<double>(0, 0);
+        epipoleY = epipole_mean_y.at<double>(0, 0);
+        /* std::cout << std::fixed << std::setprecision(7) << "X,Y: (" <<
+           epipoleX
+                << "," << epipoleY << ")" << std::endl;
+        */
+        // test:延极线方向的运动
+        // 首先，先找到一个点，然后画出他的极线
+        int i_t = 2;
+        cv::RNG &rng = cv::theRNG();
+        cv::Scalar color = cv::Scalar(rng(256), rng(256), rng(256));
+        cv::circle(leftplusImage, pt1_inlier[i_t], 5, color, -1);
+        cv::line(
+            leftplusImage, cv::Point(0, -lines[k][i_t][2] / lines[k][i_t][1]),
+            cv::Point(leftplusImage.cols,
+                      -(lines[k][i_t][2] + lines[k][i_t][0] * leftImage.cols) /
+                          lines[k][i_t][1]),
+            color);
+        cv::Point2f epipole_pt;
+        epipole_pt.x = epipole_mean_x.at<double>(0, 0);
+        epipole_pt.y = epipole_mean_y.at<double>(0, 0);
+        color = cv::Scalar(rng(0), rng(256), rng(0));
+        cv::circle(leftplusImage, epipole_pt, 5, color, -1);
+
+        float x = epipole_pt.x - pt1_inlier[i_t].x;
+        float y = epipole_pt.y - pt1_inlier[i_t].y;
+        float square_root = sqrt(pow(x, 2) + pow(y, 2));
+        x = x / square_root;
+        y = y / square_root;
+        float d_epipolar = 40;
+        x = d_epipolar * x;
+        y = d_epipolar * y;
+        cv::Point2f incremental;
+        incremental.x = pt1_inlier[i_t].x + x;
+        incremental.y = pt1_inlier[i_t].y + y;
+        cv::circle(leftplusImage, incremental, 5, color);
+        // cv::imshow("one of the leftImagePlus's epiline", leftplusImage);
+        // waitKey(0);
+      }
+    }
+    for (int j = 0; j < InlierCount; j++) {
+      double errij =
+          fabs(imagePoints[0][i][j].x * lines[1][j][0] +
+               imagePoints[0][i][j].y * lines[1][j][1] + lines[1][j][2]) +
+          fabs(imagePoints[1][i][j].x * lines[0][j][0] +
+               imagePoints[1][i][j].y * lines[0][j][1] + lines[0][j][2]);
+      // 齐次表示形式。
+      err += errij;
+      if (0.01 > errij && errij > 0) {
+        errpt_0[err_count].x = imagePoints[0][i][j].x;
+        errpt_0[err_count].y = imagePoints[0][i][j].y;
+        errpt_1[err_count].x = imagePoints[1][i][j].x;
+        errpt_1[err_count].y = imagePoints[1][i][j].y;
+        /*
+        std::cout << "image 0 coordinate:(" << errpt_0[err_count].x << ","
+                  << errpt_0[err_count].y << ")" << std::endl;
+        std::cout << "image 1 coordinate:(" << errpt_1[err_count].x << ","
+                  << errpt_1[err_count].y << ")" << std::endl;
+        std::cout << "error:" << errij << std::endl;
+        */
+        err_count++;
+      }
+    }
+    npoints += npt;
+  }
+  std::cout << "average reprojection err = " << err / npoints << std::endl;
+  std::cout << "err_count = " << err_count << std::endl;
+  cv::vector<cv::DMatch> err_Matches;
+  err_Matches.resize(err_count);
+  for (int i = 0; i < err_count; i++) {
+    err_Matches[i].queryIdx = i;
+    err_Matches[i].trainIdx = i;
+  }
+  cv::vector<cv::KeyPoint> err_key0(InlierCount);
+  cv::vector<cv::KeyPoint> err_key1(InlierCount);
+  cv::KeyPoint::convert(errpt_0, err_key0);
+  cv::KeyPoint::convert(errpt_1, err_key1);
+  cv::drawMatches(leftImage, err_key0, leftImage, err_key1, InlierMatches,
+                  MatchesImage);
+  cv::imwrite("error.png", MatchesImage, compression_params);
+
+  //利用基础矩阵和相机内参求本质矩阵，SVD分解求相机旋转。
+  cv::Mat K_t_2, K_t_3;                              //相机的内参矩阵。
+  cv::Mat F(FundamentalMatrix.size(), K_t_2.type()); //数据类型转换。
+  FundamentalMatrix.convertTo(F, CV_32FC1);
+
+  /*从文件中读取未完成
+  std::fstream calib;
+  calib.open("calib.txt");
+  if (!calib.is_open()){
+      std::cout<<"Error when loading calib result...";exit(1);
+  }
+  char buffer[300];
+  while(!calib.eof() ){
+      calib.getline(buffer,300);
+      std::cout<<buffer<<std::endl;
+  }
+  calib.close();
+  */
+
+  K_t_2 = (cv::Mat_<float>(3, 3) << 721.537700, 0.000000, 609.559300, 0.000000,
+           721.537700, 172.854000, 0.000000, 0.000000, 1.000000);
+  K_t_3 = (cv::Mat_<float>(3, 3) << 721.537700, 0.000000, 609.559300, 0.000000,
+           721.537700, 172.854000, 0.000000, 0.000000, 1.000000);
+  //相机中心的坐标
+
+  cv::Mat EssentialMat;
+  EssentialMat = K_t_2.t() * F * K_t_2;
+  std::cout << "F:" << std::endl << F << std::endl;
+
+  //基础矩阵计算的应该是没有问题，计算秩确实为2.
+  cv::Mat U, W, Vt, Rotation;
+  cv::SVD::compute(EssentialMat, W, U, Vt);
+  // std::cout << "E:" << std::endl << EssentialMat << std::endl;
+  // 照计算机视觉中的多视图几何（9.14）公式写的。
+  W = (cv::Mat_<float>(3, 3) << 0, -1, 0, 1, 0, 0, 0, 0, 1);
+  Rotation = U * W * Vt;
+  // std::cout << "Rotation:" << std::endl << Rotation << std::endl;
+  cv::Mat col = (cv::Mat_<float>(3, 1) << 0, 0, 1);
+  cv::Mat t = U * col;
+  // std::cout << "t:" << std::endl << t << std::endl;
+  cv::Mat vector_Rot;
+  cv::Rodrigues(Rotation, vector_Rot);
+  std::cout << "Rotation_vector:" << std::endl << vector_Rot << std::endl;
+  wx_t = vector_Rot.at<float>(0, 0);
+  wy_t = vector_Rot.at<float>(0, 1);
+  wz_t = vector_Rot.at<float>(0, 2);
+}
+
+bool SGMFlow::interscetion(cv::Point2f &inter_pt, cv::Point2f o1,
+                           cv::Point2f p1, cv::Point2f o2, cv::Point2f p2) {
+  cv::Point2f x = o2 - o1;
+  cv::Point2f d1 = p1 - o1;
+  cv::Point2f d2 = p2 - o2;
+
+  float cross = d1.x * d2.y - d1.y * d2.x;
+  if (std::abs(cross) < /*EPS*/ 1e-8)
+    return false;
+
+  double t1 = (x.x * d2.y - x.y * d2.x) / cross;
+  inter_pt = o1 + d1 * t1;
+  return true;
+};
 
 void SGMFlow::computeCostImage(
     const png::image<png::rgb_pixel> &leftImage,
@@ -179,7 +542,7 @@ void SGMFlow::computeCostImage(
   memset(leftCostImage_, 0,
          width_ * height_ * vzratioTotal_ * sizeof(unsigned short));
   computeLeftCostImage(leftGrayscaleImage, leftplusGrayscaleImage);
-  //这个函数是执行SGM算法的核心函数，如果想要把Stereo改成flow那么应该在这个位置将极线几何部分的变换修改一下就行了。
+  //这个函数是执行SGM算法的核心函数，如果想要把Stereo改成flow那么应该在这�����位置将极线几何部分的变换修改一下就行了。
 }
 
 void SGMFlow::convertToGrayscale(
@@ -225,6 +588,10 @@ void SGMFlow::computeLeftCostImage(
   unsigned short *costImageRow = leftCostImage_;
   calcTopRowCost(leftSobelRow, leftCensusRow, leftplusSobelRow,
                  leftplusCensusRow, costImageRow);
+  costImageRow += width_ * vzratioTotal_;
+  calcRowCosts(leftSobelRow, leftCensusRow, leftplusSobelRow, leftplusCensusRow,
+               costImageRow);
+
   //将sobel处理过的图片，census Image送到函数里面计算匹配代价。
 }
 
@@ -232,8 +599,8 @@ void SGMFlow::computeCappedSobelIamge(const unsigned char *image,
                                       const bool horizontalFlip,
                                       unsigned char *sobelImage) const {
   memset(sobelImage, sobelCapValue_, widthStep_ * height_);
-  //将sobelImage所在内存的前widthStep_ *
-  // height_个字节，用sobelCapValue_的值来进行替换。
+  //将sobelImage所���内存的前widthStep_ *
+  // height_个字节，用sobelCapValue_�����值���进行替换。
   if (horizontalFlip) {
     for (int y = 1; y < height_ - 1; ++y) {
       for (int x = 1; x < width_ - 1; ++x) {
@@ -308,27 +675,104 @@ void SGMFlow::calcTopRowCost(unsigned char *&leftSobelRow, int *&leftCensusRow,
     //行数和最大行数两者之前取个最小，这个是防止程序出错做的防护。
     unsigned short *rowAggregatedCostCurrent =
         rowAggregatedCost_ + rowAggregatedCostIndex * width_ * vzratioTotal_;
-    //这个rowAggregatedCost_是哪里来的?算了，计算SAD的时候也没有用到那就先搁置不管了。
+    //这个rowAggregatedCost_是哪里来的?算了，计算SAD的时候也没有用到那就先搁置不�����了。
     calcPixelwiseSAD(leftSobelRow, leftplusSobelRow, 0);
+    addPixelwiseHamming(leftCensusRow, leftplusCensusRow);
+
+    memset(rowAggregatedCostCurrent, 0, vzratioTotal_ * sizeof(unsigned short));
+    // x = 0
+    for (int x = 0; x <= aggregationWindowRadius_; ++x) {
+      int scale = x == 0 ? aggregationWindowRadius_ + 1 : 1;
+      for (int wp = 0; wp < vzratioTotal_; ++wp) {
+        rowAggregatedCostCurrent[wp] += static_cast<unsigned short>(
+            pixelwiseCostRow_[vzratioTotal_ * x + wp] * scale);
+        //此处本身aggregationWindowRadius_=2，这里如果是起始点，因为其左边没有别的点了
+        //所以就把自己乘了三遍，而其他的位置因为左右都有点，所以聚合的时候是三个点的cost加和。
+      }
+    }
+    // x = 1...width-1
+    for (int x = 1; x < width_; ++x) {
+      // cost aggregation 时框内右边的点是addPixelwiseCost，
+      //左边的点是subPixelwiseCost，下面这两句都是考虑了右边界和左边界的情况
+      const unsigned char *addPixelwiseCost =
+          pixelwiseCostRow_ +
+          std::min((x + aggregationWindowRadius_) * vzratioTotal_,
+                   (width_ - 1) * vzratioTotal_);
+      const unsigned char *subPixelwiseCost =
+          pixelwiseCostRow_ +
+          std::max((x - aggregationWindowRadius_ - 1) * vzratioTotal_, 0);
+      for (int wp = 0; wp < vzratioTotal_; ++wp) {
+        rowAggregatedCostCurrent[vzratioTotal_ * x + wp] =
+            static_cast<unsigned short>(
+                rowAggregatedCostCurrent[vzratioTotal_ * (x - 1) + wp] +
+                addPixelwiseCost[wp] - subPixelwiseCost[wp]);
+        //这块知道作者是按���opencv里面写的SGBM,这个位置costAggregation是在一个窗内
+        //但是我没有理解的是为什么当前点不使用自己位置的cost却去使用前一个点的聚合的结果
+        //在下面add to
+        // cost的时候，他是将这���计算的结果������一个权值加上去的。
+      }
+    }
+    // Add to cost
+    int scale = rowIndex == 0 ? aggregationWindowRadius_ + 1 : 1;
+    for (int i = 0; i < width_ * vzratioTotal_; ++i) {
+      costImageRow[i] += rowAggregatedCostCurrent[i] * scale;
+    }
+    leftSobelRow += widthStep_;
+    leftplusSobelRow += widthStep_;
+    leftCensusRow += width_;
+    leftplusCensusRow += width_;
   }
 }
+void SGMFlow::calcRowCosts(unsigned char *&leftSobelRow, int *&leftCensusRow,
+                           unsigned char *&leftplusSobelRow,
+                           int *&leftplusCensusRow,
+                           unsigned short *costImageRow) {
+  const int widthStepCost = width_ * vzratioTotal_;
+  const __m128i registerZero = _mm_setzero_si128();
 
+  for (int y = 1; y < height_; ++y) {
+    int addRowIndex = y + aggregationWindowRadius_;
+    int addRowAggregatedCostIndex =
+        std::min(addRowIndex, height_ - 1) % (aggregationWindowRadius_ * 2 + 2);
+    unsigned short *addRowAggregatedCost =
+        rowAggregatedCost_ + width_ * vzratioTotal_ * addRowAggregatedCostIndex;
+    //移动指针指向下一行的起始位置
+    if (addRowIndex < height_) {
+      calcPixelwiseSAD(leftSobelRow, leftplusSobelRow, y);
+      std::cout << "enter the Row SAD, at y=" << y << std::endl;
+      addPixelwiseHamming(leftCensusRow, leftplusCensusRow);
+      memset(addRowAggregatedCost, 0, vzratioTotal_ * sizeof(unsigned short));
+      // x = 0
+      for (int x = 0; x <= aggregationWindowRadius_; ++x) {
+        int scale = x == 0 ? aggregationWindowRadius_ + 1 : 1;
+        for (int wp = 0; wp < vzratioTotal_; ++wp) {
+          addRowAggregatedCost[wp] += static_cast<unsigned short>(
+              pixelwiseCostRow_[vzratioTotal_ * x + wp] * scale);
+        }
+      }
+    }
+    leftSobelRow += widthStep_;
+    leftplusSobelRow += widthStep_;
+    leftCensusRow += width_;
+    leftplusCensusRow += width_;
+    costImageRow += widthStepCost;
+  }
+}
 void SGMFlow::calcPixelwiseSAD(const unsigned char *leftSobelRow,
                                const unsigned char *leftplusSobelRow, int y) {
   //这个函数的标注是计算像素级别的SAD cost。
   //如果是计算顶行的话，那么y就设置成0
   calcHalfPixelLeftPlus(leftplusSobelRow); //为什么要用sobel来计算半像素？
-
-  double wx_t = 0.22621486;
-  double wy_t = 0.061689742;
-  double wz_t = 1.3907996;
-
-  double f = 721.53770;
-  double cx = 609.559300;
-  double cy = 172.854000;
-
-  double epipoleX = 605.20;
-  double epipoleY = 168.78;
+                                           /*
+                                             double wx_t = 0.0083899479;
+                                             double wy_t = 0.0090362905;
+                                             double wz_t = -1.5707502;
+                                         
+                                             double f = 721.53770;
+                                         
+                                             double epipoleX = 605.20;
+                                             double epipoleY = 168.78;
+                                             */
   for (int x = 0; x < width_; ++x) {
     int leftCenterValue = leftSobelRow[x];
     int leftHalfLeftValue =
@@ -338,21 +782,23 @@ void SGMFlow::calcPixelwiseSAD(const unsigned char *leftSobelRow,
                                  : leftCenterValue;
     int leftMinValue = std::min(leftHalfLeftValue, leftHalfRightValue);
     leftMinValue = std::min(leftMinValue, leftCenterValue);
-    //在左边插值出来的像素和右边插值出来的像素，以及自己本身三个像素中选择一个。
+    //在左边���值出来的像素和右���插值出来的像素，以及自己本���三个像素中选择一个。
     int leftMaxValue = std::min(leftHalfLeftValue, leftHalfRightValue);
     leftMaxValue = std::max(leftMaxValue, leftCenterValue);
     // 作者的代码在这个位置用了一些技巧，将每行计算的cost存储在pixelwiseCostRow_之中。
-    // 因为Stereo的搜索极线都是水平的，并且y坐标是相同的，但是在flow中虽然极线可能是水平
-    // 的，但是，两幅图片中极线的y坐标不一定相同。
-    // 这个地方之所以给人用left左边缘去匹配leftplus的右边缘，是因为之前计算sobel的时候，
-    // leftplus是被左右翻转了的。
-    // 再多说一些这里的实现思路:首先，计算极点的时候我是直接在图像上面计算的极点，就是两条
-    // 极线的交点，所以这个坐标直接就是极线的坐标。延极线方向的移动只需要目标点坐标减去极
+    // 因为Stereo的搜索极线都是水平的，并且y坐标是相同，但是在flow中虽然极线可能是水平
+    // 的，但是，两幅图片中���线的y坐标不一定相同。
+    // 这个地方之所以给人用left左边缘去匹配leftplus的右边缘，�������因为之前计算sobel的时候，
+    // leftplus是左右fanzhuan了的。
+    // 再多说yi些这里的实现思路:首先，计算极点的时候我是直接在图像上面计算的极点，就是两条
+    // 极线的interface，所以这个坐标zhi就是极线的坐标。延极线方向的移动只需要目标点坐标减去极
     // 点坐标求得单位方向向量之后，就可以沿着极线方向运动，他的那个d注意看，是leftplus减
-    // left的距离，所以如果d是的正的话，他是背离极点运动的，所以一定要以极点作为起点。
-    // 这里面有一个trick：在文章中的推导是在相机坐标系下，d不是（u,v）上面的像素坐标平移，所以要乘以焦距。
+    // left�����距离，所以如果d是的正的���，他是背离极点运动的，所以一定要以极点作为起点���
+    // 这里面有一个trick：在文章中的推导是在相机坐标系下zhi
+    // d不是（u,v）上面的像素坐标平移，
+    // 所以要乘以焦距。
     // 第二点，这个代码是参照双目立体视觉匹配写的，所以他在写的时候就是一行一行计算，因为本
-    // 身双目立体视觉的极线就是平行于x轴的，但是光流里面极线不平行，暂时按照极线几何的路数
+    // 身双���立体视觉的极线���是平行于x轴的，但是光流里面极线不平行，暂时按照极线几何的路数
     // 走把。
     //此处vmax还不能确定应该用什么样的方式确定合理，以后再将其写成参数设置，此处仅仅将其写为
     //一个变量先定义一下，用作测试吧
@@ -364,26 +810,24 @@ void SGMFlow::calcPixelwiseSAD(const unsigned char *leftSobelRow,
     for (int wp = 0; wp <= vzratioTotal_; ++wp) {
       // 这里的d应该是指的disparity，将其改写成vzratio。
       //
-      //这个取值有问题，因为flow、应该是先计算位置，然后再进行取值，这个地方如果取整数值的话，
+      //这个取值有���题，因为flow、应该是先计算位置，然后再进行取值，这个地方如果取整数值的话，
       //这个点不一定在极线上面，讲道理这里为了保证这个点在极线上应该进行一个插值处理，但是现在
       //先按照整数来取值
+      y = 200;
       double uwTransX, uwTransY;
       // calculate the rotation
-      uwTransX = (x - cx) +
-                 (f * wx_t - wz_t * y + wy_t * x * x / f - wx_t * x * y / f);
-      uwTransY = (y - cy) +
-                 (-f * wx_t + wz_t * x + wy_t * x * y / f - wx_t * y * y / f);
+      uwTransX = (f * wy_t - wz_t * y + wy_t * x * x / f - wx_t * x * y / f);
+      uwTransY = (-f * wx_t + wz_t * x + wy_t * x * y / f - wx_t * y * y / f);
       // distance between p and epipole o;
       double distancePEpi = sqrt(pow(x + uwTransX - epipoleX, 2) +
                                  pow(y + uwTransY - epipoleY, 2));
-
+      // std::cout << "transfer coordinate: (" << uwTransX << "," <<
+      // uwTransY
+      // << ")" << std::endl;
       double distanceRRhat =
           distancePEpi * wp * (vMax / n) / (1 - wp * (vMax / n));
-      std::cout << "reach here! dis" << std::endl;
-
-      std::cout << "distanceRRhat: " << distanceRRhat << std::endl;
-      //这个位置面临的问题是，当vzration不断增加时，其背离极点的距离越来越远，可能会超出图像的边缘
-      //那么这个时候，就会报错。在立体视觉问题中这个很好判断，因为只要给横坐标上限制就可以了，但是现
+      //这个位置面临的问题是，当vzration不断增加时，其背离极点的距离越来越远，可���会超出图像的边缘
+      //那么这个时候，就会报错。在立体视觉问题中这个很好判断，���为只要给横坐标上限制就可以了，但是现
       //在面临的问题是，如何提出一个泛化的限制。
       //还存在的一个问题就是：提出了限制之后，剩余灰度等级的代价该如何填充。
       double directionX = x - epipoleX;
@@ -394,29 +838,50 @@ void SGMFlow::calcPixelwiseSAD(const unsigned char *leftSobelRow,
       int yPlus = y + uwTransY + directionY * distanceRRhat;
       // 现在求出了根据VZ-ratio计算的，left图像上一个点，在leftplus图像上的对应点。
       // 这个点式计算出来的理论值点，并不是真真切切在计算的sobelImage上面的点。
-      // 这个位置先看看计算结果，如果不好的话，以后可能还要给一个插值，现在先给一个向下取整
+      // ���个位置先看看计算结果，如果不好的话���以后可能还要给一个插值，现在先给一个向���取���
       // widthStep_ * y + width_ - x
-      std::cout << uwTransX + directionX * distanceRRhat << std::endl;
-      std::cout << "(" << x << "," << y << ")" << std::endl;
-      int leftplusCenterValue =
-          leftplusSobelRow[widthStep_ * yPlus + width_ - xPlus - 1];
-      int leftplusMinValue =
-          halfPixelLeftPlusMin_[widthStep_ * yPlus + width_ - xPlus - 1];
-      int leftplusMaxValue =
-          halfPixelLeftPlusMax_[widthStep_ * yPlus + width_ - xPlus - 1];
-      // 可以看到这个位置取点直接就是按位置取点
-      int costLtoR = std::max(0, leftCenterValue - leftplusMaxValue);
-      costLtoR = std::max(costLtoR, leftplusMinValue - leftCenterValue);
-      int costRtoL = std::max(0, leftplusCenterValue - leftMaxValue);
-      costRtoL = std::max(costRtoL, leftMinValue - leftplusCenterValue);
-      int costValue = std::min(costLtoR, costRtoL);
-      //上面的部分是没有考量过边界条件和优化的一个cost计算
-      //计算完cost之后将其存贮
-      pixelwiseCostRow_[vzratioTotal_ * x + wp] = costValue;
-      std::cout << "wp = " << wp << "///costValue: " << costValue << std::endl;
+
+      // std::cout << "Y:" << y << std::endl;
+      // std::cout << "Plus coordinate (" << xPlus << ", " << yPlus << ")"
+      //           << std::endl;
+      if (xPlus >= 0 && yPlus >= 0 && xPlus <= width_ && yPlus <= height_) {
+        // std::cout << uwTransY + directionY * distanceRRhat << std::endl;
+        // std::cout << "(" << xPlus << "," << yPlus << ")" << std::endl;
+        int leftplusCenterValue =
+            leftplusSobelRow[widthStep_ * yPlus + width_ - xPlus - 1];
+        int leftplusMinValue =
+            halfPixelLeftPlusMin_[widthStep_ * yPlus + width_ - xPlus - 1];
+        int leftplusMaxValue =
+            halfPixelLeftPlusMax_[widthStep_ * yPlus + width_ - xPlus - 1];
+        // 可以看到这个位置取点直接就是按位置取点
+        int costLtoR = std::max(0, leftCenterValue - leftplusMaxValue);
+        costLtoR = std::max(costLtoR, leftplusMinValue - leftCenterValue);
+        int costRtoL = std::max(0, leftplusCenterValue - leftMaxValue);
+        costRtoL = std::max(costRtoL, leftMinValue - leftplusCenterValue);
+        int costValue = std::min(costLtoR, costRtoL);
+        pixelwiseCostRow_[vzratioTotal_ * x + wp] = costValue;
+        if (wp == 128) {
+          std::cout << "wp = " << wp << "///costValue: " << costValue
+                    << std::endl;
+          cv::waitKey(0);
+        }
+
+      } else {
+        if (wp == 0) {
+          pixelwiseCostRow_[vzratioTotal_ * x + wp] = 0;
+        }
+        // std::cout << "at the wp = " << wp << "/x = " << x << ",y = " << y
+        //           << ",start outside the image!" << std::endl;
+        for (int wpRemains = wp + 1; wpRemains < vzratioTotal_; ++wpRemains) {
+          pixelwiseCostRow_[vzratioTotal_ * x + wpRemains] =
+              pixelwiseCostRow_[vzratioTotal_ * x + wpRemains - 1];
+        }
+        break;
+      }
     }
-    std::cout << "reach here! Finish on point cost calculation" << std::endl;
-    cv::waitKey(0);
+    // std::cout << "finish one point at all vzratio level, x = " << x
+    //           << std::endl;
+    // cv::waitKey(0);
   }
 }
 
@@ -437,5 +902,23 @@ void SGMFlow::calcHalfPixelLeftPlus(const unsigned char *leftplusSobelRow) {
 
     halfPixelLeftPlusMin_[x] = minValue;
     halfPixelLeftPlusMax_[x] = maxValue;
+  }
+}
+
+void SGMFlow::addPixelwiseHamming(const int *leftCensusRow,
+                                  const int *leftplusCensusRow) {
+  //但是因为双目填chong分非常的固定，而光流的不好确定，所以此处全进行计算。
+  for (int x = 0; x < width_; ++x) {
+    int leftCencusCode = leftCensusRow[x];
+    int hammingDistance = 0;
+    for (int wp = 0; wp <= vzratioTotal_; ++wp) {
+      int leftplusCensusCode = leftplusCensusRow[x - wp];
+      //作者在此处使用的是_mm_popcnt_u32，但是我的电脑不知道为什么通不过。
+      //因�����__builtin_popcount not platform specific 所以我换成了这个
+      hammingDistance = static_cast<int>(__builtin_popcount(
+          static_cast<unsigned int>(leftCencusCode ^ leftplusCensusCode)));
+      pixelwiseCostRow_[vzratioTotal_ * x + wp] +=
+          static_cast<unsigned char>(hammingDistance * censusWeightFactor_);
+    }
   }
 }

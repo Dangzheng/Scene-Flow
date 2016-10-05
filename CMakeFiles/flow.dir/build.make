@@ -34,10 +34,10 @@ cmake_force:
 SHELL = /bin/sh
 
 # The CMake executable.
-CMAKE_COMMAND = /usr/local/Cellar/cmake/3.6.1/bin/cmake
+CMAKE_COMMAND = /usr/local/Cellar/cmake/3.6.2/bin/cmake
 
 # The command to remove a file.
-RM = /usr/local/Cellar/cmake/3.6.1/bin/cmake -E remove -f
+RM = /usr/local/Cellar/cmake/3.6.2/bin/cmake -E remove -f
 
 # Escaping for special characters.
 EQUALS = =
@@ -60,15 +60,15 @@ include CMakeFiles/flow.dir/flags.make
 CMakeFiles/flow.dir/SGMFlow.o: CMakeFiles/flow.dir/flags.make
 CMakeFiles/flow.dir/SGMFlow.o: SGMFlow.cpp
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object CMakeFiles/flow.dir/SGMFlow.o"
-	/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/c++   $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -o CMakeFiles/flow.dir/SGMFlow.o -c /Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/SGMFlow.cpp
+	/usr/bin/clang++   $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -o CMakeFiles/flow.dir/SGMFlow.o -c /Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/SGMFlow.cpp
 
 CMakeFiles/flow.dir/SGMFlow.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/flow.dir/SGMFlow.i"
-	/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/c++  $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/SGMFlow.cpp > CMakeFiles/flow.dir/SGMFlow.i
+	/usr/bin/clang++  $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/SGMFlow.cpp > CMakeFiles/flow.dir/SGMFlow.i
 
 CMakeFiles/flow.dir/SGMFlow.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/flow.dir/SGMFlow.s"
-	/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/c++  $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/SGMFlow.cpp -o CMakeFiles/flow.dir/SGMFlow.s
+	/usr/bin/clang++  $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/SGMFlow.cpp -o CMakeFiles/flow.dir/SGMFlow.s
 
 CMakeFiles/flow.dir/SGMFlow.o.requires:
 
@@ -84,15 +84,15 @@ CMakeFiles/flow.dir/SGMFlow.o.provides.build: CMakeFiles/flow.dir/SGMFlow.o
 CMakeFiles/flow.dir/SPSFlow.o: CMakeFiles/flow.dir/flags.make
 CMakeFiles/flow.dir/SPSFlow.o: SPSFlow.cpp
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Building CXX object CMakeFiles/flow.dir/SPSFlow.o"
-	/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/c++   $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -o CMakeFiles/flow.dir/SPSFlow.o -c /Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/SPSFlow.cpp
+	/usr/bin/clang++   $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -o CMakeFiles/flow.dir/SPSFlow.o -c /Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/SPSFlow.cpp
 
 CMakeFiles/flow.dir/SPSFlow.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/flow.dir/SPSFlow.i"
-	/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/c++  $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/SPSFlow.cpp > CMakeFiles/flow.dir/SPSFlow.i
+	/usr/bin/clang++  $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/SPSFlow.cpp > CMakeFiles/flow.dir/SPSFlow.i
 
 CMakeFiles/flow.dir/SPSFlow.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/flow.dir/SPSFlow.s"
-	/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/c++  $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/SPSFlow.cpp -o CMakeFiles/flow.dir/SPSFlow.s
+	/usr/bin/clang++  $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/SPSFlow.cpp -o CMakeFiles/flow.dir/SPSFlow.s
 
 CMakeFiles/flow.dir/SPSFlow.o.requires:
 
@@ -108,15 +108,15 @@ CMakeFiles/flow.dir/SPSFlow.o.provides.build: CMakeFiles/flow.dir/SPSFlow.o
 CMakeFiles/flow.dir/flow.o: CMakeFiles/flow.dir/flags.make
 CMakeFiles/flow.dir/flow.o: flow.cpp
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Building CXX object CMakeFiles/flow.dir/flow.o"
-	/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/c++   $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -o CMakeFiles/flow.dir/flow.o -c /Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/flow.cpp
+	/usr/bin/clang++   $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -o CMakeFiles/flow.dir/flow.o -c /Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/flow.cpp
 
 CMakeFiles/flow.dir/flow.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/flow.dir/flow.i"
-	/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/c++  $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/flow.cpp > CMakeFiles/flow.dir/flow.i
+	/usr/bin/clang++  $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/flow.cpp > CMakeFiles/flow.dir/flow.i
 
 CMakeFiles/flow.dir/flow.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/flow.dir/flow.s"
-	/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/c++  $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/flow.cpp -o CMakeFiles/flow.dir/flow.s
+	/usr/bin/clang++  $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/flow.cpp -o CMakeFiles/flow.dir/flow.s
 
 CMakeFiles/flow.dir/flow.o.requires:
 

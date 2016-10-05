@@ -21,11 +21,15 @@ stdexcept
 -
 vector
 -
-opencv2/opencv.hpp
--
 
 /Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/SGMFlow.h
 png++/png.hpp
+-
+opencv2/legacy/legacy.hpp
+-
+opencv2/nonfree/nonfree.hpp
+-
+opencv2/opencv.hpp
 -
 
 /Users/Zheng/Documents/R.Urtasun/Flow/Scene-Flow/SPSFlow.cpp
