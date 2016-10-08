@@ -44,17 +44,44 @@ private:
                                const bool horizontalFlip,
                                unsigned char *sobelImage) const;
   void computeCensusImage(const unsigned char *image, int *censusImage) const;
-  void calcTopRowCost(unsigned char *&leftSobelRow, int *&leftCensusRow,
-                      unsigned char *&leftplusSobelRow, int *&leftplusCensusRow,
-                      unsigned short *costImageRow);
+  void
+  calcTopRowCost(unsigned char *&leftSobelRow, int *&leftCensusRow,
+                 unsigned char *&leftplusSobelRow, int *&leftplusCensusRow,
+                 unsigned short *costImageRow, unsigned char *&leftSobelImage,
+                 unsigned char *&leftplusSobelImage, const int *leftCensusImage,
+                 const int *leftplusCensusImage, const bool calcLeft = true);
   void calcRowCosts(unsigned char *&leftSobelRow, int *&leftCensusRow,
                     unsigned char *&leftplusSobelRow, int *&leftplusCensusRow,
-                    unsigned short *costImageRow);
-  void calcPixelwiseSAD(const unsigned char *leftSobelRow,
-                        const unsigned char *leftplusSobelRow, int y = 0);
+                    unsigned short *costImageRow,
+                    unsigned char *&leftSobelImage,
+                    unsigned char *&leftplusSobelImage,
+                    const int *leftCensusImage, const int *leftplusCensusImage,
+                    const bool calcLeft = true);
+  // add by Dangzheng
+  void calcPixelwiseSADHamming(
+      const unsigned char *leftSobelRow, const unsigned char *leftplusSobelRow,
+      const unsigned char *leftSobelImage,
+      const unsigned char *leftplusSobelImage, const int *leftCensusRow,
+      const int *leftplusCensusRow, const int *leftCensusImage,
+      const int *leftplusCensusImage, const int yIndex = 0,
+      const bool calcLeft = true);
+  void addPixelwiseHamming(const int *leftCensusRow,
+                           const int *leftplusCensusRow,
+                           const int *leftCensusImage,
+                           const int *leftplusCensusImage,
+                           const bool calcLeft = true, const int xBase = 0,
+                           const int xMatching = 0, const int yMatching = 0,
+                           const int wp = 0);
+  //->
   void calcHalfPixelLeftPlus(const unsigned char *leftplusSobelRow);
   void addPixelwiseHamming(const int *leftCensusRow,
                            const int *leftplusCensusRow);
+  void computeLeftPlusCostImage();
+  void performSGM(unsigned short *costImage, unsigned short *vzratioImage);
+  void speckleFilter(const int maxSpeckleSize, const int maxDifference,
+                     unsigned short *image) const;
+  void enforceLeftRightConsistency(unsigned short *leftVZRatioImage,
+                                   unsigned short *leftplusVZRatioImage) const;
 
   // Parameters(Parameters
   // 和Data这些变量名字的定义都是直接照搬的，出现问题再考虑是什么问题。)
@@ -75,8 +102,7 @@ private:
   unsigned short *leftplusCostImage_;
   unsigned char *pixelwiseCostRow_;
   unsigned short *rowAggregatedCost_;
-  unsigned char *halfPixelLeftPlusMin_;
-  unsigned char *halfPixelLeftPlusMax_;
+
   int pathRowBufferTotal_;
   int vzratioSize_;
   int pathTotal_;
@@ -96,7 +122,16 @@ private:
   double wx_t;
   double wy_t;
   double wz_t;
+  double wx_inv;
+  double wy_inv;
+  double wz_inv;
   double f = 721.53770;
   double epipoleX;
   double epipoleY;
+
+  // 几个censusImage和sobelImage
+  unsigned char *leftSobelImage;
+  unsigned char *leftplusSobelImage;
+  int *leftCensusImage;
+  int *leftplusCensusImage;
 };

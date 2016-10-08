@@ -98,7 +98,6 @@ void SGMFlow::setConsistencyThreshold(const int consistencyThreshold) {
   consistencyThreshold_ = consistencyThreshold;
 }
 
-//------------------------------------------------------------------------
 void SGMFlow::compute(const png::image<png::rgb_pixel> &leftImage,
                       const png::image<png::rgb_pixel> &leftplusImage,
                       float *vzratioImage, std::string leftImageFilename,
@@ -106,6 +105,27 @@ void SGMFlow::compute(const png::image<png::rgb_pixel> &leftImage,
   initialize(leftImage, leftplusImage);
   calcEpipoleRotaionVector(leftImageFilename, leftplusImageFilename);
   computeCostImage(leftImage, leftplusImage);
+  unsigned short *leftVZRatioImage = reinterpret_cast<unsigned short *>(
+      malloc(width_ * height_ * sizeof(unsigned short)));
+  performSGM(leftCostImage_, leftVZRatioImage);
+  unsigned short *leftplusVZRatioImage = reinterpret_cast<unsigned short *>(
+      malloc(width_ * height_ * sizeof(unsigned short)));
+  performSGM(leftplusCostImage_, leftplusVZRatioImage);
+  enforceLeftRightConsistency(leftVZRatioImage, leftplusVZRatioImage);
+  std::cout << "今晚要上演的是：一幕失落的世界..." << std::endl;
+  cv::Mat outputImage(height_, width_, CV_32F);
+  for (int y = 0; y < height_; ++y) {
+    for (int x = 0; x < width_; ++x) {
+      vzratioImage[width_ * y + x] =
+          static_cast<float>(leftVZRatioImage[width_ * y + x] / vzratioFactor_);
+      outputImage.at<float>(y, x) = vzratioImage[width_ * y + x];
+    }
+  }
+  cv::imshow("OutputVZratioImage", outputImage);
+  cv::waitKey(0);
+  freeDataBuffer();
+  free(leftVZRatioImage);
+  free(leftplusVZRatioImage);
 }
 
 void SGMFlow::initialize(const png::image<png::rgb_pixel> &leftImage,
@@ -135,16 +155,11 @@ void SGMFlow::allocateDataBuffer() {
   int pixelwiseCostRowBufferSize = width_ * vzratioTotal_;
   int rowAggregatedCostBufferSize =
       width_ * vzratioTotal_ * (aggregationWindowRadius_ * 2 + 2);
-  int halfPixelLeftPlusBufferSize = widthStep_;
 
   pixelwiseCostRow_ = reinterpret_cast<unsigned char *>(
       _mm_malloc(pixelwiseCostRowBufferSize * sizeof(unsigned char), 16));
   rowAggregatedCost_ = reinterpret_cast<unsigned short *>(
       _mm_malloc(rowAggregatedCostBufferSize * sizeof(unsigned short), 16));
-  halfPixelLeftPlusMin_ = reinterpret_cast<unsigned char *>(
-      _mm_malloc(halfPixelLeftPlusBufferSize * sizeof(unsigned char), 16));
-  halfPixelLeftPlusMax_ = reinterpret_cast<unsigned char *>(
-      _mm_malloc(halfPixelLeftPlusBufferSize * sizeof(unsigned char), 16));
 
   pathRowBufferTotal_ = 2;
   vzratioSize_ = vzratioTotal_ + 16;
@@ -168,14 +183,13 @@ void SGMFlow::freeDataBuffer() {
   _mm_free(leftplusCostImage_);
   _mm_free(pixelwiseCostRow_);
   _mm_free(rowAggregatedCost_);
-  _mm_free(halfPixelLeftPlusMin_);
-  _mm_free(halfPixelLeftPlusMax_);
   _mm_free(sgmBuffer_);
 }
+
 void SGMFlow::calcEpipoleRotaionVector(std::string leftImageFilename,
                                        std::string leftplusImageFilename) {
   cv::Mat leftImage, leftplusImage;
-  std::cout << "hello zheng~ I reach here~lalala" << std::endl;
+  std::cout << "Garrosh，你不配统治部落！！！" << std::endl;
   leftImage = cv::imread(leftImageFilename, 1);
   leftplusImage = cv::imread(leftplusImageFilename, 1);
   // cv::imshow("Flow_image_left", leftImage);
@@ -507,12 +521,20 @@ void SGMFlow::calcEpipoleRotaionVector(std::string leftImageFilename,
   cv::Mat col = (cv::Mat_<float>(3, 1) << 0, 0, 1);
   cv::Mat t = U * col;
   // std::cout << "t:" << std::endl << t << std::endl;
-  cv::Mat vector_Rot;
+  cv::Mat vector_Rot, vector_Rot_Inverse;
   cv::Rodrigues(Rotation, vector_Rot);
+  cv::Rodrigues(Rotation.t(), vector_Rot_Inverse);
   std::cout << "Rotation_vector:" << std::endl << vector_Rot << std::endl;
+  std::cout << "Rotation_vector_inverse:" << std::endl
+            << vector_Rot_Inverse << std::endl;
+  // t -> t+1
   wx_t = vector_Rot.at<float>(0, 0);
   wy_t = vector_Rot.at<float>(0, 1);
   wz_t = vector_Rot.at<float>(0, 2);
+  // t+1 -> t
+  wx_inv = vector_Rot_Inverse.at<float>(0, 0);
+  wy_inv = vector_Rot_Inverse.at<float>(0, 1);
+  wz_inv = vector_Rot_Inverse.at<float>(0, 2);
 }
 
 bool SGMFlow::interscetion(cv::Point2f &inter_pt, cv::Point2f o1,
@@ -541,8 +563,13 @@ void SGMFlow::computeCostImage(
                      leftplusGrayscaleImage);
   memset(leftCostImage_, 0,
          width_ * height_ * vzratioTotal_ * sizeof(unsigned short));
+  std::cout << "今晚要上演的是!!!一幕光荣的救赎..." << std::endl;
   computeLeftCostImage(leftGrayscaleImage, leftplusGrayscaleImage);
   //这个函数是执行SGM算法的核心函数，如果想要把Stereo改成flow那么应该在这�����位置将极线几何部分的变换修改一下就行了。
+  computeLeftPlusCostImage();
+
+  free(leftGrayscaleImage);
+  free(leftplusGrayscaleImage);
 }
 
 void SGMFlow::convertToGrayscale(
@@ -565,17 +592,18 @@ void SGMFlow::convertToGrayscale(
 void SGMFlow::computeLeftCostImage(
     const unsigned char *leftGrayscaleImage,
     const unsigned char *leftplusGrayscaleImage) {
-  unsigned char *leftSobelImage = reinterpret_cast<unsigned char *>(
+  // leftSobelImage等原来在此处声明和释放。
+  leftSobelImage = reinterpret_cast<unsigned char *>(
       _mm_malloc(widthStep_ * height_ * sizeof(unsigned char), 16));
-  unsigned char *leftplusSobelImage = reinterpret_cast<unsigned char *>(
+  leftplusSobelImage = reinterpret_cast<unsigned char *>(
       _mm_malloc(widthStep_ * height_ * sizeof(unsigned char), 16));
   //此处用sobel算子来处理图像，sobel处理完的图像留下的都是图像的边缘，对左图像检测水平方向的边缘，对左plus检测垂直方向的边缘。
   computeCappedSobelIamge(leftGrayscaleImage, false, leftSobelImage);
   computeCappedSobelIamge(leftplusGrayscaleImage, true, leftplusSobelImage);
 
-  int *leftCensusImage =
+  leftCensusImage =
       reinterpret_cast<int *>(malloc(width_ * height_ * sizeof(int)));
-  int *leftplusCensusImage =
+  leftplusCensusImage =
       reinterpret_cast<int *>(malloc(width_ * height_ * sizeof(int)));
   computeCensusImage(leftGrayscaleImage, leftCensusImage);
   computeCensusImage(leftplusGrayscaleImage, leftplusCensusImage);
@@ -587,12 +615,13 @@ void SGMFlow::computeLeftCostImage(
   int *leftplusCensusRow = leftplusCensusImage;
   unsigned short *costImageRow = leftCostImage_;
   calcTopRowCost(leftSobelRow, leftCensusRow, leftplusSobelRow,
-                 leftplusCensusRow, costImageRow);
+                 leftplusCensusRow, costImageRow, leftSobelImage,
+                 leftplusSobelImage, leftCensusImage, leftplusCensusImage);
   costImageRow += width_ * vzratioTotal_;
   calcRowCosts(leftSobelRow, leftCensusRow, leftplusSobelRow, leftplusCensusRow,
-               costImageRow);
-
-  //将sobel处理过的图片，census Image送到函数里面计算匹配代价。
+               costImageRow, leftSobelImage, leftplusSobelImage,
+               leftCensusImage, leftplusCensusImage);
+  //将sobel处理过的图片，census Image送到函数里面计算匹配代������
 }
 
 void SGMFlow::computeCappedSobelIamge(const unsigned char *image,
@@ -663,11 +692,14 @@ void SGMFlow::computeCensusImage(const unsigned char *image,
   }
 }
 
-void SGMFlow::calcTopRowCost(unsigned char *&leftSobelRow, int *&leftCensusRow,
-                             unsigned char *&leftplusSobelRow,
-                             int *&leftplusCensusRow,
-                             unsigned short *costImageRow) {
+void SGMFlow::calcTopRowCost(
+    unsigned char *&leftSobelRow, int *&leftCensusRow,
+    unsigned char *&leftplusSobelRow, int *&leftplusCensusRow,
+    unsigned short *costImageRow, unsigned char *&leftSobelImage,
+    unsigned char *&leftplusSobelImage, const int *leftCensusImage,
+    const int *leftplusCensusImage, const bool calcLeft) {
   //这个函数标注的计算顶行的cost，顶行因为在边缘，所以要特殊处理。
+  //因为最初给的时候这个位置的rowIndex=0，所以直接让leftSobelImage的指针和row一样就行了。
   for (int rowIndex = 0; rowIndex <= aggregationWindowRadius_; ++rowIndex) {
     //都是在计算不超过窗的半径的cost。
     int rowAggregatedCostIndex =
@@ -676,9 +708,13 @@ void SGMFlow::calcTopRowCost(unsigned char *&leftSobelRow, int *&leftCensusRow,
     unsigned short *rowAggregatedCostCurrent =
         rowAggregatedCost_ + rowAggregatedCostIndex * width_ * vzratioTotal_;
     //这个rowAggregatedCost_是哪里来的?算了，计算SAD的时候也没有用到那就先搁置不�����了。
-    calcPixelwiseSAD(leftSobelRow, leftplusSobelRow, 0);
-    addPixelwiseHamming(leftCensusRow, leftplusCensusRow);
 
+    // calcPixelwiseSAD(leftSobelRow, leftplusSobelRow, 0);
+    calcPixelwiseSADHamming(leftSobelRow, leftplusSobelRow, leftSobelImage,
+                            leftplusSobelImage, leftCensusRow,
+                            leftplusCensusRow, leftCensusImage,
+                            leftplusCensusImage, rowIndex);
+    // addPixelwiseHamming(leftCensusRow, leftplusCensusRow);
     memset(rowAggregatedCostCurrent, 0, vzratioTotal_ * sizeof(unsigned short));
     // x = 0
     for (int x = 0; x <= aggregationWindowRadius_; ++x) {
@@ -706,10 +742,6 @@ void SGMFlow::calcTopRowCost(unsigned char *&leftSobelRow, int *&leftCensusRow,
             static_cast<unsigned short>(
                 rowAggregatedCostCurrent[vzratioTotal_ * (x - 1) + wp] +
                 addPixelwiseCost[wp] - subPixelwiseCost[wp]);
-        //这块知道作者是按���opencv里面写的SGBM,这个位置costAggregation是在一个窗内
-        //但是我没有理解的是为什么当前点不使用自己位置的cost却去使用前一个点的聚合的结果
-        //在下面add to
-        // cost的时候，他是将这���计算的结果������一个权值加上去的。
       }
     }
     // Add to cost
@@ -723,10 +755,13 @@ void SGMFlow::calcTopRowCost(unsigned char *&leftSobelRow, int *&leftCensusRow,
     leftplusCensusRow += width_;
   }
 }
-void SGMFlow::calcRowCosts(unsigned char *&leftSobelRow, int *&leftCensusRow,
-                           unsigned char *&leftplusSobelRow,
-                           int *&leftplusCensusRow,
-                           unsigned short *costImageRow) {
+
+void SGMFlow::calcRowCosts(
+    unsigned char *&leftSobelRow, int *&leftCensusRow,
+    unsigned char *&leftplusSobelRow, int *&leftplusCensusRow,
+    unsigned short *costImageRow, unsigned char *&leftSobelImage,
+    unsigned char *&leftplusSobelImage, const int *leftCensusImage,
+    const int *leftplusCensusImage, const bool calcLeft) {
   const int widthStepCost = width_ * vzratioTotal_;
   const __m128i registerZero = _mm_setzero_si128();
 
@@ -738,9 +773,13 @@ void SGMFlow::calcRowCosts(unsigned char *&leftSobelRow, int *&leftCensusRow,
         rowAggregatedCost_ + width_ * vzratioTotal_ * addRowAggregatedCostIndex;
     //移动指针指向下一行的起始位置
     if (addRowIndex < height_) {
-      calcPixelwiseSAD(leftSobelRow, leftplusSobelRow, y);
-      std::cout << "enter the Row SAD, at y=" << y << std::endl;
-      addPixelwiseHamming(leftCensusRow, leftplusCensusRow);
+      // calcPixelwiseSAD(leftSobelRow, leftplusSobelRow, y);
+      calcPixelwiseSADHamming(leftSobelRow, leftplusSobelRow, leftSobelImage,
+                              leftplusSobelImage, leftCensusRow,
+                              leftplusCensusRow, leftCensusImage,
+                              leftplusCensusImage, y);
+      // std::cout << "enter the Row SAD, at y=" << y << std::endl;
+      // addPixelwiseHamming(leftCensusRow, leftplusCensusRow);
       memset(addRowAggregatedCost, 0, vzratioTotal_ * sizeof(unsigned short));
       // x = 0
       for (int x = 0; x <= aggregationWindowRadius_; ++x) {
@@ -748,6 +787,87 @@ void SGMFlow::calcRowCosts(unsigned char *&leftSobelRow, int *&leftCensusRow,
         for (int wp = 0; wp < vzratioTotal_; ++wp) {
           addRowAggregatedCost[wp] += static_cast<unsigned short>(
               pixelwiseCostRow_[vzratioTotal_ * x + wp] * scale);
+        }
+      }
+      // x = 1...witdth-1
+      int subRowAggregatedCostIndex =
+          std::max(y - aggregationWindowRadius_ - 1, 0) %
+          (aggregationWindowRadius_ * 2 + 2);
+      const unsigned short *subRowAggregatedCost =
+          rowAggregatedCost_ +
+          width_ * vzratioTotal_ * subRowAggregatedCostIndex;
+      const unsigned short *previousCostRow = costImageRow - widthStepCost;
+      for (int x = 1; x < width_; ++x) {
+        const unsigned char *addPixelwiseCost =
+            pixelwiseCostRow_ +
+            std::min((x + aggregationWindowRadius_) * vzratioTotal_,
+                     (width_ - 1) * vzratioTotal_);
+        const unsigned char *subPixelwiseCost =
+            pixelwiseCostRow_ +
+            std::max((x - aggregationWindowRadius_ - 1) * vzratioTotal_, 0);
+
+        for (int wp = 0; wp < vzratioTotal_; wp += 16) {
+          // wp = 2;
+          // std::cout << "point -> value:" << int(*(addPixelwiseCost + wp))
+          //           << std::endl;
+          // cv::waitKey(0);
+          __m128i registerAddPixelwiseLow = _mm_load_si128(
+              reinterpret_cast<const __m128i *>(addPixelwiseCost + wp));
+          __m128i registerAddPixelwiseHigh =
+              _mm_unpackhi_epi8(registerAddPixelwiseLow, registerZero);
+          registerAddPixelwiseLow =
+              _mm_unpacklo_epi8(registerAddPixelwiseLow, registerZero);
+          __m128i registerSubPixelwiseLow = _mm_load_si128(
+              reinterpret_cast<const __m128i *>(subPixelwiseCost + wp));
+          __m128i registerSubPixelwiseHigh =
+              _mm_unpackhi_epi8(registerSubPixelwiseLow, registerZero);
+          registerSubPixelwiseLow =
+              _mm_unpacklo_epi8(registerSubPixelwiseLow, registerZero);
+          // Low
+          __m128i registerAddAggregated =
+              _mm_load_si128(reinterpret_cast<const __m128i *>(
+                  addRowAggregatedCost + vzratioTotal_ * (x - 1) + wp));
+          registerAddAggregated = _mm_adds_epi16(
+              _mm_subs_epi16(registerAddAggregated, registerSubPixelwiseLow),
+              registerAddPixelwiseLow);
+          __m128i registerCost =
+              _mm_load_si128(reinterpret_cast<const __m128i *>(
+                  previousCostRow + vzratioTotal_ * x + wp));
+          registerCost = _mm_adds_epi16(
+              _mm_subs_epi16(
+                  registerCost,
+                  _mm_load_si128(reinterpret_cast<const __m128i *>(
+                      subRowAggregatedCost + vzratioTotal_ * x + wp))),
+              registerAddAggregated);
+          _mm_store_si128(reinterpret_cast<__m128i *>(addRowAggregatedCost +
+                                                      vzratioTotal_ * x + wp),
+                          registerAddAggregated);
+          _mm_store_si128(reinterpret_cast<__m128i *>(costImageRow +
+                                                      vzratioTotal_ * x + wp),
+                          registerCost);
+
+          // High
+          registerAddAggregated =
+              _mm_load_si128(reinterpret_cast<const __m128i *>(
+                  addRowAggregatedCost + vzratioTotal_ * (x - 1) + wp + 8));
+          registerAddAggregated = _mm_adds_epi16(
+              _mm_subs_epi16(registerAddAggregated, registerSubPixelwiseHigh),
+              registerAddPixelwiseHigh);
+          registerCost = _mm_load_si128(reinterpret_cast<const __m128i *>(
+              previousCostRow + vzratioTotal_ * x + wp + 8));
+          registerCost = _mm_adds_epi16(
+              _mm_subs_epi16(
+                  registerCost,
+                  _mm_load_si128(reinterpret_cast<const __m128i *>(
+                      subRowAggregatedCost + vzratioTotal_ * x + wp + 8))),
+              registerAddAggregated);
+          _mm_store_si128(reinterpret_cast<__m128i *>(addRowAggregatedCost +
+                                                      vzratioTotal_ * x + wp +
+                                                      8),
+                          registerAddAggregated);
+          _mm_store_si128(reinterpret_cast<__m128i *>(
+                              costImageRow + vzratioTotal_ * x + wp + 8),
+                          registerCost);
         }
       }
     }
@@ -758,167 +878,624 @@ void SGMFlow::calcRowCosts(unsigned char *&leftSobelRow, int *&leftCensusRow,
     costImageRow += widthStepCost;
   }
 }
-void SGMFlow::calcPixelwiseSAD(const unsigned char *leftSobelRow,
-                               const unsigned char *leftplusSobelRow, int y) {
-  //这个函数的标注是计算像素级别的SAD cost。
-  //如果是计算顶行的话，那么y就设置成0
-  calcHalfPixelLeftPlus(leftplusSobelRow); //为什么要用sobel来计算半像素？
-                                           /*
-                                             double wx_t = 0.0083899479;
-                                             double wy_t = 0.0090362905;
-                                             double wz_t = -1.5707502;
-                                         
-                                             double f = 721.53770;
-                                         
-                                             double epipoleX = 605.20;
-                                             double epipoleY = 168.78;
-                                             */
-  for (int x = 0; x < width_; ++x) {
-    int leftCenterValue = leftSobelRow[x];
-    int leftHalfLeftValue =
-        x > 0 ? (leftCenterValue + leftSobelRow[x - 1]) / 2 : leftCenterValue;
-    int leftHalfRightValue = x < width_ - 1
-                                 ? (leftCenterValue + leftSobelRow[x + 1]) / 2
-                                 : leftCenterValue;
-    int leftMinValue = std::min(leftHalfLeftValue, leftHalfRightValue);
-    leftMinValue = std::min(leftMinValue, leftCenterValue);
-    //在左边���值出来的像素和右���插值出来的像素，以及自己本���三个像素中选择一个。
-    int leftMaxValue = std::min(leftHalfLeftValue, leftHalfRightValue);
-    leftMaxValue = std::max(leftMaxValue, leftCenterValue);
-    // 作者的代码在这个位置用了一些技巧，将每行计算的cost存储在pixelwiseCostRow_之中。
-    // 因为Stereo的搜索极线都是水平的，并且y坐标是相同，但是在flow中虽然极线可能是水平
-    // 的，但是，两幅图片中���线的y坐标不一定相同。
-    // 这个地方之所以给人用left左边缘去匹配leftplus的右边缘，�������因为之前计算sobel的时候，
-    // leftplus是左右fanzhuan了的。
-    // 再多说yi些这里的实现思路:首先，计算极点的时候我是直接在图像上面计算的极点，就是两条
-    // 极线的interface，所以这个坐标zhi就是极线的坐标。延极线方向的移动只需要目标点坐标减去极
-    // 点坐标求得单位方向向量之后，就可以沿着极线方向运动，他的那个d注意看，是leftplus减
-    // left�����距离，所以如果d是的正的���，他是背离极点运动的，所以一定要以极点作为起点���
-    // 这里面有一个trick：在文章中的推导是在相机坐标系下zhi
-    // d不是（u,v）上面的像素坐标平移，
-    // 所以要乘以焦距。
-    // 第二点，这个代码是参照双目立体视觉匹配写的，所以他在写的时候就是一行一行计算，因为本
-    // 身双���立体视觉的极线���是平行于x轴的，但是光流里面极线不平行，暂时按照极线几何的路数
-    // 走把。
-    //此处vmax还不能确定应该用什么样的方式确定合理，以后再将其写成参数设置，此处仅仅将其写为
-    //一个变量先定义一下，用作测试吧
-    float vMax = 1 / 0.8;
-    int n = 256;
-    //此处的0.8指的是距离相机光心，可以测量的最小的深度值为0.8，但是理论上来讲，成像平面在
-    // z= 1处，所以最小的能测量的深度应该是1。
 
-    for (int wp = 0; wp <= vzratioTotal_; ++wp) {
-      // 这里的d应该是指的disparity，将其改写成vzratio。
-      //
-      //这个取值有���题，因为flow、应该是先计算位置，然后再进行取值，这个地方如果取整数值的话，
-      //这个点不一定在极线上面，讲道理这里为了保证这个点在极线上应该进行一个插值处理，但是现在
-      //先按照整数来取值
-      y = 200;
-      double uwTransX, uwTransY;
-      // calculate the rotation
-      uwTransX = (f * wy_t - wz_t * y + wy_t * x * x / f - wx_t * x * y / f);
-      uwTransY = (-f * wx_t + wz_t * x + wy_t * x * y / f - wx_t * y * y / f);
-      // distance between p and epipole o;
-      double distancePEpi = sqrt(pow(x + uwTransX - epipoleX, 2) +
-                                 pow(y + uwTransY - epipoleY, 2));
-      // std::cout << "transfer coordinate: (" << uwTransX << "," <<
-      // uwTransY
-      // << ")" << std::endl;
-      double distanceRRhat =
-          distancePEpi * wp * (vMax / n) / (1 - wp * (vMax / n));
-      //这个位置面临的问题是，当vzration不断增加时，其背离极点的距离越来越远，可���会超出图像的边缘
-      //那么这个时候，就会报错。在立体视觉问题中这个很好判断，���为只要给横坐标上限制就可以了，但是现
-      //在面临的问题是，如何提出一个泛化的限制。
-      //还存在的一个问题就是：提出了限制之后，剩余灰度等级的代价该如何填充。
-      double directionX = x - epipoleX;
-      double directionY = y - epipoleY;
-      directionX = directionX / sqrt(pow(directionX, 2) + pow(directionY, 2));
-      directionY = directionY / sqrt(pow(directionX, 2) + pow(directionY, 2));
-      int xPlus = x + uwTransX + directionX * distanceRRhat;
-      int yPlus = y + uwTransY + directionY * distanceRRhat;
-      // 现在求出了根据VZ-ratio计算的，left图像上一个点，在leftplus图像上的对应点。
-      // 这个点式计算出来的理论值点，并不是真真切切在计算的sobelImage上面的点。
-      // ���个位置先看看计算结果，如果不好的话���以后可能还要给一个插值，现在先给一个向���取���
-      // widthStep_ * y + width_ - x
+void SGMFlow::calcPixelwiseSADHamming(
+    const unsigned char *leftSobelRow, const unsigned char *leftplusSobelRow,
+    const unsigned char *leftSobelImage,
+    const unsigned char *leftplusSobelImage, const int *leftCensusRow,
+    const int *leftplusCensusRow, const int *leftCensusImage,
+    const int *leftplusCensusImage, const int yIndex, const bool calcLeft) {
+  //这个函数作为一个通用版本，既可以计算leftCostImage，又可以用于一致性校验计算leftplus图片
+  float vMax = 0.2 / 1;
+  int n = 256;
+  if (calcLeft == true) {
+    //这里面之所以与原来不同，计算leftSobelRow而不是leftPlus的，因为flow寻找matching点
+    //的时候是沿着极线方向进行搜索的，所以没有办法很好的预先计算出leftplus上被匹配的点。
+    //所以在这里我取消所有预计算，所有都是现取现算。
+    int y = yIndex;
+    for (int x = 0; x < width_; ++x) {
+      int leftCenterValue = leftSobelRow[x];
+      int leftHalfLeftValue =
+          x > 0 ? (leftCenterValue + leftSobelRow[x - 1]) / 2 : leftCenterValue;
+      int leftHalfRightValue = x < width_ - 1
+                                   ? (leftCenterValue + leftSobelRow[x + 1]) / 2
+                                   : leftCenterValue;
+      int leftMinValue = std::min(leftHalfLeftValue, leftHalfRightValue);
+      leftMinValue = std::min(leftMinValue, leftCenterValue);
+      int leftMaxValue = std::min(leftHalfLeftValue, leftHalfRightValue);
+      leftMaxValue = std::max(leftMaxValue, leftCenterValue);
 
-      // std::cout << "Y:" << y << std::endl;
-      // std::cout << "Plus coordinate (" << xPlus << ", " << yPlus << ")"
-      //           << std::endl;
-      if (xPlus >= 0 && yPlus >= 0 && xPlus <= width_ && yPlus <= height_) {
-        // std::cout << uwTransY + directionY * distanceRRhat << std::endl;
-        // std::cout << "(" << xPlus << "," << yPlus << ")" << std::endl;
-        int leftplusCenterValue =
-            leftplusSobelRow[widthStep_ * yPlus + width_ - xPlus - 1];
-        int leftplusMinValue =
-            halfPixelLeftPlusMin_[widthStep_ * yPlus + width_ - xPlus - 1];
-        int leftplusMaxValue =
-            halfPixelLeftPlusMax_[widthStep_ * yPlus + width_ - xPlus - 1];
-        // 可以看到这个位置取点直接就是按位置取点
-        int costLtoR = std::max(0, leftCenterValue - leftplusMaxValue);
-        costLtoR = std::max(costLtoR, leftplusMinValue - leftCenterValue);
-        int costRtoL = std::max(0, leftplusCenterValue - leftMaxValue);
-        costRtoL = std::max(costRtoL, leftMinValue - leftplusCenterValue);
-        int costValue = std::min(costLtoR, costRtoL);
-        pixelwiseCostRow_[vzratioTotal_ * x + wp] = costValue;
-        if (wp == 128) {
-          std::cout << "wp = " << wp << "///costValue: " << costValue
-                    << std::endl;
-          cv::waitKey(0);
-        }
+      for (int wp = 0; wp <= vzratioTotal_; ++wp) {
+        double uwTransX, uwTransY;
+        // calculate the rotation
+        uwTransX = (f * wy_t - wz_t * y + wy_t * x * x / f - wx_t * x * y / f);
+        uwTransY = (-f * wx_t + wz_t * x + wy_t * x * y / f - wx_t * y * y / f);
+        // distance between p and epipole o;
+        double distancePEpi = sqrt(pow(x + uwTransX - epipoleX, 2) +
+                                   pow(y + uwTransY - epipoleY, 2));
 
-      } else {
-        if (wp == 0) {
-          pixelwiseCostRow_[vzratioTotal_ * x + wp] = 0;
-        }
-        // std::cout << "at the wp = " << wp << "/x = " << x << ",y = " << y
-        //           << ",start outside the image!" << std::endl;
-        for (int wpRemains = wp + 1; wpRemains < vzratioTotal_; ++wpRemains) {
-          pixelwiseCostRow_[vzratioTotal_ * x + wpRemains] =
-              pixelwiseCostRow_[vzratioTotal_ * x + wpRemains - 1];
-        }
-        break;
+        double distanceRRhat =
+            distancePEpi * wp * (vMax / n) / (1 - wp * (vMax / n));
+
+        double directionX = x - epipoleX;
+        double directionY = y - epipoleY;
+        directionX = directionX / sqrt(pow(directionX, 2) + pow(directionY, 2));
+        directionY = directionY / sqrt(pow(directionX, 2) + pow(directionY, 2));
+        int xPlus = x + uwTransX + directionX * distanceRRhat;
+        int yPlus = y + uwTransY + directionY * distanceRRhat;
+
+        if (xPlus >= 0 && yPlus >= 0 && xPlus <= width_ && yPlus <= height_) {
+
+          int leftplusCenterValue =
+              leftplusSobelImage[widthStep_ * yPlus + width_ - xPlus - 1];
+          int leftHalfLeftValue =
+              xPlus > 0
+                  ? (leftplusCenterValue +
+                     leftplusSobelImage[widthStep_ * yPlus + width_ -
+                                        (xPlus - 1) - 1]) /
+                        2
+                  : leftplusCenterValue;
+          int leftHalfRightValue =
+              xPlus < width_ - 1
+                  ? (leftplusCenterValue +
+                     leftplusSobelImage[widthStep_ * yPlus + width_ -
+                                        (xPlus + 1) - 1]) /
+                        2
+                  : leftplusCenterValue;
+          int leftplusMinValue =
+              std::min(leftHalfLeftValue, leftHalfRightValue);
+          leftplusMinValue = std::min(leftplusMinValue, leftplusCenterValue);
+          int leftplusMaxValue =
+              std::min(leftHalfLeftValue, leftHalfRightValue);
+          leftplusMaxValue = std::max(leftplusMaxValue, leftplusCenterValue);
+
+          int costLtoR = std::max(0, leftCenterValue - leftplusMaxValue);
+          costLtoR = std::max(costLtoR, leftplusMinValue - leftCenterValue);
+          int costRtoL = std::max(0, leftplusCenterValue - leftMaxValue);
+          costRtoL = std::max(costRtoL, leftMinValue - leftplusCenterValue);
+          int costValue = std::min(costLtoR, costRtoL);
+          pixelwiseCostRow_[vzratioTotal_ * x + wp] = costValue;
+          addPixelwiseHamming(leftCensusRow, leftplusCensusRow, leftCensusImage,
+                              leftplusCensusImage, false, x, xPlus, yPlus, wp);
+          // if (wp == 128) {
+          //   std::cout << "wp = " << wp << "///costValue: " << costValue
+          //             << std::endl;
+          //   cv::waitKey(0);
+          //}
+        } else {
+          if (wp == 0) {
+            pixelwiseCostRow_[vzratioTotal_ * x + wp] = 0;
+          }
+
+          for (int wpRemains = wp + 1; wpRemains < vzratioTotal_; ++wpRemains) {
+            pixelwiseCostRow_[vzratioTotal_ * x + wpRemains] =
+                pixelwiseCostRow_[vzratioTotal_ * x + wpRemains - 1];
+          }
+          break;
+        } //如果这个位置���坐标能在matching图像上面找得到，那么就用，不能找到直接填充
       }
     }
-    // std::cout << "finish one point at all vzratio level, x = " << x
-    //           << std::endl;
-    // cv::waitKey(0);
-  }
-}
+  } // left cost calc end
+  else {
+    int yPlus = yIndex;
+    for (int xPlus = 0; xPlus < width_; ++xPlus) {
+      //这个for是从leftPlus开始计算了
+      int leftplusCenterValue =
+          leftplusSobelImage[widthStep_ * yPlus + width_ - xPlus - 1];
+      int leftHalfLeftValue =
+          xPlus > 0
+              ? (leftplusCenterValue +
+                 leftplusSobelImage[widthStep_ * yPlus + width_ - (xPlus - 1) -
+                                    1]) /
+                    2
+              : leftplusCenterValue;
+      int leftHalfRightValue =
+          xPlus < width_ - 1
+              ? (leftplusCenterValue +
+                 leftplusSobelImage[widthStep_ * yPlus + width_ - (xPlus + 1) -
+                                    1]) /
+                    2
+              : leftplusCenterValue;
+      int leftplusMinValue = std::min(leftHalfLeftValue, leftHalfRightValue);
+      leftplusMinValue = std::min(leftplusMinValue, leftplusCenterValue);
+      int leftplusMaxValue = std::min(leftHalfLeftValue, leftHalfRightValue);
+      leftplusMaxValue = std::max(leftplusMaxValue, leftplusCenterValue);
+      for (int wp = 0; wp <= vzratioTotal_; ++wp) {
+        double uwTransX, uwTransY;
+        uwTransX = (f * wy_inv - wz_inv * yPlus + wy_inv * xPlus * xPlus / f -
+                    wx_inv * xPlus * yPlus / f);
+        uwTransY = (-f * wx_inv + wz_inv * xPlus + wy_inv * xPlus * yPlus / f -
+                    wx_inv * yPlus * yPlus / f);
+        double distancePEpi = sqrt(pow(xPlus + uwTransX - epipoleX, 2) +
+                                   pow(yPlus + uwTransY - epipoleY, 2));
+        double distanceRRhat =
+            distancePEpi * wp * (vMax / n) / (1 - wp * (vMax / n));
+        //这个是计算的时候应该是朝着极点走的。
+        double directionX = epipoleX - xPlus;
+        double directionY = epipoleY - yPlus;
+        directionX = directionX / sqrt(pow(directionX, 2) + pow(directionY, 2));
+        directionY = directionY / sqrt(pow(directionX, 2) + pow(directionY, 2));
+        int x = xPlus + uwTransX + directionX * distanceRRhat;
+        int y = xPlus + uwTransY + directionY * distanceRRhat;
 
-void SGMFlow::calcHalfPixelLeftPlus(const unsigned char *leftplusSobelRow) {
-  for (int x = 0; x < width_; ++x) {
-    int centerValue = leftplusSobelRow[x];
-    int leftHalfValue =
-        x > 0 ? (centerValue + leftplusSobelRow[x - 1]) / 2 : centerValue;
-    int rightHalfValue = x < width_ - 1
-                             ? (centerValue + leftplusSobelRow[x + 1]) / 2
-                             : centerValue;
-    //用左边的点计算一次halfvalue，右边点计算一次，然后统计他们的最大最小值。
-    //有什么用呢？
-    int minValue = std::min(leftHalfValue, rightHalfValue);
-    minValue = std::min(minValue, centerValue);
-    int maxValue = std::max(leftHalfValue, rightHalfValue);
-    maxValue = std::max(maxValue, centerValue);
+        if (x >= 0 && y >= 0 && x <= width_ && y <= height_) {
+          int leftCenterValue = leftSobelImage[widthStep_ * y + x];
+          int leftHalfLeftValue =
+              x > 0 ? (leftCenterValue + leftSobelRow[x - 1]) / 2
+                    : leftCenterValue;
+          int leftHalfRightValue =
+              x < width_ - 1 ? (leftCenterValue + leftSobelRow[x + 1]) / 2
+                             : leftCenterValue;
+          int leftMinValue = std::min(leftHalfLeftValue, leftHalfRightValue);
+          leftMinValue = std::min(leftMinValue, leftCenterValue);
+          int leftMaxValue = std::min(leftHalfLeftValue, leftHalfRightValue);
+          leftMaxValue = std::max(leftMaxValue, leftCenterValue);
 
-    halfPixelLeftPlusMin_[x] = minValue;
-    halfPixelLeftPlusMax_[x] = maxValue;
-  }
+          int costLtoR = std::max(0, leftCenterValue - leftplusMaxValue);
+          costLtoR = std::max(costLtoR, leftplusMinValue - leftCenterValue);
+          int costRtoL = std::max(0, leftplusCenterValue - leftMaxValue);
+          costRtoL = std::max(costRtoL, leftMinValue - leftplusCenterValue);
+          int costValue = std::min(costLtoR, costRtoL);
+          pixelwiseCostRow_[vzratioTotal_ * xPlus + wp] = costValue;
+          addPixelwiseHamming(leftCensusRow, leftplusCensusRow, leftCensusImage,
+                              leftplusCensusImage, false, xPlus, x, y, wp);
+          //这个位置的变量名字需要改变了
+        } else {
+          if (wp == 0) {
+            pixelwiseCostRow_[vzratioTotal_ * xPlus + wp] = 0;
+          }
+          for (int wpRemains = wp + 1; wpRemains < vzratioTotal_; ++wpRemains) {
+            pixelwiseCostRow_[vzratioTotal_ * xPlus + wpRemains] =
+                pixelwiseCostRow_[vzratioTotal_ * xPlus + wpRemains - 1];
+          }
+          break;
+        }
+      }
+    } // for xPlus < width_
+  }   // else
 }
 
 void SGMFlow::addPixelwiseHamming(const int *leftCensusRow,
-                                  const int *leftplusCensusRow) {
-  //但是因为双目填chong分非常的固定，而光流的不好确定，所以此处全进行计算。
-  for (int x = 0; x < width_; ++x) {
-    int leftCencusCode = leftCensusRow[x];
-    int hammingDistance = 0;
-    for (int wp = 0; wp <= vzratioTotal_; ++wp) {
-      int leftplusCensusCode = leftplusCensusRow[x - wp];
-      //作者在此处使用的是_mm_popcnt_u32，但是我的电脑不知道为什么通不过。
-      //因�����__builtin_popcount not platform specific 所以我换成了这个
-      hammingDistance = static_cast<int>(__builtin_popcount(
-          static_cast<unsigned int>(leftCencusCode ^ leftplusCensusCode)));
-      pixelwiseCostRow_[vzratioTotal_ * x + wp] +=
-          static_cast<unsigned char>(hammingDistance * censusWeightFactor_);
+                                  const int *leftplusCensusRow,
+                                  const int *leftCensusImage,
+                                  const int *leftplusCensusImage,
+                                  const bool calcLeft, const int xBase,
+                                  const int xMatching, const int yMatching,
+                                  const int wp) {
+
+  int leftCensusCode, leftplusCensusCode;
+  int hammingDistance = 0;
+  if (calcLeft == true) {
+    leftCensusCode = leftCensusRow[xBase];
+    leftplusCensusCode = leftplusCensusImage[yMatching * width_ + xMatching];
+  } else {
+    leftplusCensusCode = leftplusCensusRow[xBase];
+    leftCensusCode = leftCensusImage[yMatching * width_ + xMatching];
+  }
+  hammingDistance = static_cast<int>(__builtin_popcount(
+      static_cast<unsigned int>(leftCensusCode ^ leftplusCensusCode)));
+  pixelwiseCostRow_[vzratioTotal_ * xBase + wp] +=
+      static_cast<unsigned char>(hammingDistance * censusWeightFactor_);
+  //这里不再写hamming distance
+  // cost逐个像素填充的原因是，如果找不到对应点，那也没有参考的
+  // distance 能够填充，如果有的话，计算sad的时候是逐个点计算完之后就计算hamming
+  //所以和前面的的一样的话，也相当于填充了
+}
+
+void SGMFlow::computeLeftPlusCostImage() {
+  // const int widthStepCost = width_ * vzratioTotal_;
+  //这个几个关键的内存块等到leftplus的cost计算完之后再将其释放。
+  unsigned char *leftSobelRow = leftSobelImage;
+  unsigned char *leftplusSobelRow = leftplusSobelImage;
+  int *leftCensusRow = leftCensusImage;
+  int *leftplusCensusRow = leftplusCensusImage;
+  unsigned short *costImageRow = leftplusCostImage_;
+  calcTopRowCost(leftSobelRow, leftCensusRow, leftplusSobelRow,
+                 leftplusCensusRow, costImageRow, leftSobelImage,
+                 leftplusSobelImage, leftCensusImage, leftplusCensusImage,
+                 false);
+  costImageRow += width_ * vzratioTotal_;
+  calcRowCosts(leftSobelRow, leftCensusRow, leftplusSobelRow, leftplusCensusRow,
+               costImageRow, leftSobelImage, leftplusSobelImage,
+               leftCensusImage, leftplusCensusImage, false);
+
+  _mm_free(leftSobelImage);
+  _mm_free(leftplusSobelImage);
+  free(leftCensusImage);
+  free(leftplusCensusImage);
+}
+
+void SGMFlow::performSGM(unsigned short *costImage,
+                         unsigned short *vzratioImage) {
+  std::cout << "铭记于心年轻人，大地母亲就在你身旁..." << std::endl;
+  const short costMax = SHRT_MAX;
+  //因为SGM那篇文章里面介绍了Aggregation cost是有最大值的。
+  int widthStepCostImage = width_ * vzratioTotal_;
+  //上面这个变量里面记录的应该是，这一行的偏移量，也就是步长
+  short *costSums =
+      sgmBuffer_; // costsum也是指向了一块内存，这块内存很大，基本上能存sgm所需要的所有的大小
+  memset(costSums, 0, costSumBufferSize_ * sizeof(short));
+
+  short **pathCosts = new short *[pathRowBufferTotal_];
+  short **pathMinCosts = new short *[pathRowBufferTotal_];
+
+  const int processPassTotal = 2;
+  for (int processPassCount = 0; processPassCount < processPassTotal;
+       ++processPassCount) {
+    int startX, endX, stepX;
+    int startY, endY, stepY;
+    if (processPassCount == 0) {
+      startX = 0;
+      endX = width_;
+      stepX = 1;
+      startY = 0;
+      endY = height_;
+      stepY = 1;
+    } else {
+      startX = width_ - 1;
+      endX = -1;
+      stepX = -1;
+      startY = height_ - 1;
+      endY = -1;
+      stepY = -1;
+    }
+    // pathRowBufferTotal_ = 2;
+    // 下面这个for都是在初始化，没有做别的事情
+    for (int i = 0; i < pathRowBufferTotal_; ++i) {
+      pathCosts[i] = costSums + costSumBufferSize_ + pathCostBufferSize_ * i +
+                     pathVZratioSize_ + 8;
+      //这是在提供位置，并非是计算赋值操作.costSums是一块大内存的起始位置
+      //这个位置的pathCostBufferSize_一偏移一行就计算完了。
+
+      memset(pathCosts[i] - pathVZratioSize_ - 8, 0,
+             pathCostBufferSize_ * sizeof(short));
+      //这里之所以减去是为了应对下面的负数偏移
+      //所以这里剪完之后，从pathCosts[i] = costSums +
+      // costSumBufferSize_开始，一大块内存全是0
+      pathMinCosts[i] = costSums + costSumBufferSize_ +
+                        pathCostBufferSize_ * pathRowBufferTotal_ +
+                        pathMinCostBufferSize_ * i + pathTotal_ * 2;
+      //可以看到pathMinCosts用的是pathCosts之后的一块空间。
+      // pathCostBufferSize_ *
+      // pathRowBufferTotal_相当于是把pathCosts的空间让出来了
+      //一个pathMinCosts用的空间是pathMinCostBufferSize_这么大
+      //也就是一行的path那么大
+      memset(pathMinCosts[i] - pathTotal_, 0,
+             pathMinCostBufferSize_ * sizeof(short));
+      //可以看到他一开始指的位置靠后了16，但是初始化的时候只初始化到靠前
+      // 8个位置，可能因为pathCosts也靠后了8个位置，他在这里把位置让出来了
+    }
+
+    for (int y = startY; y != endY; y += stepY) {
+      unsigned short *pixelCostRow = costImage + widthStepCostImage * y;
+      short *costSumRow = costSums + costSumBufferRowSize_ * y;
+      // 难道最后空出来的那部分8个位置，存储的是每一行最小cost的加和
+      // 下面这一块也都是在初始化，没必要再看了
+      memset(pathCosts[0] - pathVZratioSize_ - 8, 0,
+             pathVZratioSize_ * sizeof(short));
+      memset(pathCosts[0] + width_ * pathVZratioSize_ - 8, 0,
+             pathVZratioSize_ * sizeof(short));
+      memset(pathMinCosts[0] - pathTotal_, 0, pathTotal_ * sizeof(short));
+      memset(pathMinCosts[0] + width_ * pathTotal_, 0,
+             pathTotal_ * sizeof(short));
+      //这里的初始化也非常的简单，就是按位置来进行初始化，都初始化为0，两两为一组，
+      //一组里面的值都是对应的两个部分，从计算的空间，和从右下计算的空间。
+      for (int x = startX; x != endX; x += stepX) {
+        int pathMinX =
+            x * pathTotal_; //这里表示的是点的位置x8条path位置（偏移量）
+        int pathX =
+            pathMinX * vzratioSize_; //点的位置x8条pathx所有的视差等级（偏移量）
+        int previousPathMin0 = pathMinCosts[0][pathMinX - stepX * pathTotal_] +
+                               smoothnessPenaltyLarge_;
+        //上面初始化的时候-pathTotal_所以把stepX * pathTotal_这个位置给让出来了
+        //这句话的意思是，将之前的最小的path的最小的cost拿出来加上一个大的平滑惩罚，
+        //为什么默认在这个位置是视差等级查1个以上的的位置
+        int previousPathMin2 =
+            pathMinCosts[1][pathMinX + 2] + smoothnessPenaltyLarge_;
+        //注意这两个变量不是指针了，已经是整形的数值了
+        //这手看着贼迷乱
+        short *previousPathCosts0 =
+            pathCosts[0] + pathX - stepX * pathVZratioSize_;
+        short *previousPathCosts2 = pathCosts[1] + pathX + vzratioSize_ * 2;
+        //下面这一句是在，第一个起始点的位置，都放上最大的cost
+        previousPathCosts0[-1] = previousPathCosts0[vzratioTotal_] = costMax;
+        previousPathCosts2[-1] = previousPathCosts2[vzratioTotal_] = costMax;
+
+        short *pathCostCurrent = pathCosts[0] + pathX;
+        const unsigned short *pixelCostCurrent =
+            pixelCostRow + vzratioTotal_ * x;
+        short *costSumCurrent = costSumRow + vzratioTotal_ * x;
+        // pixelCostRow 指向的是CostImage的起始位置
+        __m128i regPenaltySmall =
+            _mm_set1_epi16(static_cast<short>(smoothnessPenaltySmall_));
+
+        __m128i regPathMin0, regPathMin2;
+        regPathMin0 = _mm_set1_epi16(static_cast<short>(previousPathMin0));
+        regPathMin2 = _mm_set1_epi16(static_cast<short>(previousPathMin2));
+        __m128i regNewPathMin = _mm_set1_epi16(costMax);
+
+        for (int d = 0; d < vzratioTotal_; d += 8) {
+          __m128i regPixelCost = _mm_load_si128(
+              reinterpret_cast<const __m128i *>(pixelCostCurrent + d));
+          //因为pixelCostCurrent也是一个指针，所以给了偏移量d之后取值为，在视差为d时cost。
+          __m128i regPathCost0, regPathCost2;
+          regPathCost0 = _mm_load_si128(
+              reinterpret_cast<const __m128i *>(previousPathCosts0 + d));
+          regPathCost2 = _mm_load_si128(
+              reinterpret_cast<const __m128i *>(previousPathCosts2 + d));
+          //因为视差值相差1，加小惩罚，这个相差一包括大一和小一，所以此处有d+1和d-1
+          //并且比较了，直接视差取d和相差1加small惩罚项到底cost更小
+          regPathCost0 = _mm_min_epi16(
+              regPathCost0,
+              _mm_adds_epi16(_mm_loadu_si128(reinterpret_cast<const __m128i *>(
+                                 previousPathCosts0 + d - 1)),
+                             regPenaltySmall));
+          //这里是先将之前的path
+          regPathCost0 = _mm_min_epi16(
+              regPathCost0,
+              _mm_adds_epi16(_mm_loadu_si128(reinterpret_cast<const __m128i *>(
+                                 previousPathCosts0 + d + 1)),
+                             regPenaltySmall));
+          regPathCost2 = _mm_min_epi16(
+              regPathCost2,
+              _mm_adds_epi16(_mm_loadu_si128(reinterpret_cast<const __m128i *>(
+                                 previousPathCosts2 + d - 1)),
+                             regPenaltySmall));
+          regPathCost2 = _mm_min_epi16(
+              regPathCost2,
+              _mm_adds_epi16(_mm_loadu_si128(reinterpret_cast<const __m128i *>(
+                                 previousPathCosts2 + d + 1)),
+                             regPenaltySmall));
+          // regPathMin0为之前path最小的cost，现在
+          regPathCost0 = _mm_min_epi16(regPathCost0, regPathMin0);
+          //因为path本身是不重要的，而在每一步取的最小的值是最重要的，所以而且他在遍历这个视差的时候
+          //相当于是站在一个点处，去寻找这个点处，对应最小cost的视差���������级。
+          //因为这个还是逐行处理的
+          regPathCost0 = _mm_adds_epi16(
+              _mm_subs_epi16(regPathCost0, regPathMin0), regPixelCost);
+          //这一步应该就是作者在文章里面提到的，为了保持这个cost不要持���增大，所以要�������次减去
+          //之前最小路径的cost，这样在每一个位置处才有最小值和最大值。
+          regPathCost2 = _mm_min_epi16(regPathCost2, regPathMin2);
+          regPathCost2 = _mm_adds_epi16(
+              _mm_subs_epi16(regPathCost2, regPathMin2), regPixelCost);
+
+          _mm_store_si128(reinterpret_cast<__m128i *>(pathCostCurrent + d),
+                          regPathCost0);
+          _mm_store_si128(reinterpret_cast<__m128i *>(pathCostCurrent + d +
+                                                      vzratioSize_ * 2),
+                          regPathCost2);
+          //上面这两行���将计算的path的cost，���储���相应的内存位�����处。
+          __m128i regMin02 =
+              _mm_min_epi16(_mm_unpacklo_epi16(regPathCost0, regPathCost2),
+                            _mm_unpackhi_epi16(regPathCost0, regPathCost2));
+          // extern __m128i _mm_unpacklo_epi16(__m128i _A, __m128i _B);
+          //返回一个__m128i的寄存器，它将寄存器_A和寄存器_B的低64bit数以32bit为单位交织在一块。
+          //例如，_A=(_A0,_A1,_A2,_A3,_A4,_A5,_A6,_A7),_B=(_B0,_B1,_B2,_B3,_B4,_B5,_B6,_B7),
+          //其中_Ai,_Bi为16bit整数，_A0,_B0为低位，返回结果为(_A0,_A1,_B0,_B1,_A2,_A3,_B2,_B3),
+          // r0=_A0, r1=_B0, r2=_A1, r3=_B1
+          // extern __m128i _mm_unpackhi_epi16(__m128i _A, __m128i _B);
+          //返回一个__m128i的寄存器，它将寄存器_A和寄存器_B的高64bit数以32bit为单位交织在一块。
+          //例如，_A=(_A0,_A1,_A2,_A3,_A4,_A5,_A6,_A7),_B=(_B0,_B1,_B2,_B3,_B4,_B5,_B6,_B7),
+          //其中_Ai,_Bi为16bit整数，_A0,_B0为低位，返回结果为(_A4,_A5,_B4,_B5,_A6,_A7,_B6,_B7),
+          // r0=_A2, r1=_B2, r2=_A3, r3=_B3
+          //
+          // 我个人认为这个0和2
+          // 所做的事情是一模一样的，他在计算的时候第一遍这个东西讲道理应该是没什么用的
+          // 因为他的初始值都是一样的，所以计算出来的东西也应该都是一样的，看她把值存储在了从右下角位置开始
+          // 的内存位置，应该是说他第二遍从右下脚开始计算的时候没准会用到2的结果。
+          regMin02 = _mm_min_epi16(_mm_unpacklo_epi16(regMin02, regMin02),
+                                   _mm_unpackhi_epi16(regMin02, regMin02));
+          regNewPathMin = _mm_min_epi16(regNewPathMin, regMin02);
+
+          __m128i regCostSum = _mm_load_si128(
+              reinterpret_cast<const __m128i *>(costSumCurrent + d));
+
+          regCostSum = _mm_adds_epi16(regCostSum, regPathCost0);
+          regCostSum = _mm_adds_epi16(regCostSum, regPathCost2);
+
+          _mm_store_si128(reinterpret_cast<__m128i *>(costSumCurrent + d),
+                          regCostSum);
+        }
+
+        regNewPathMin =
+            _mm_min_epi16(regNewPathMin, _mm_srli_si128(regNewPathMin, 8));
+        _mm_storel_epi64(
+            reinterpret_cast<__m128i *>(&pathMinCosts[0][pathMinX]),
+            regNewPathMin);
+        // extern __m128i _mm_srli_si128(__m128i _A, int _Imm);
+        //返回一个__m128i的寄存器，将寄存器_A中的8个16bit整数按照_Count进行相同的逻辑右移，
+        //移位填充值为0,r0=srl(_A0, _Count), r1=srl(_A1, _Count), ...
+        // r7=srl(_A7, _Count),
+        // shifting in zeros
+      }
+
+      if (processPassCount == processPassTotal - 1) {
+        unsigned short *disparityRow = vzratioImage + width_ * y;
+
+        for (int x = 0; x < width_; ++x) {
+          short *costSumCurrent = costSumRow + vzratioTotal_ * x;
+          int bestSumCost = costSumCurrent[0];
+          int bestDisparity = 0;
+          for (int d = 1; d < vzratioTotal_; ++d) {
+            if (costSumCurrent[d] < bestSumCost) {
+              bestSumCost = costSumCurrent[d];
+              bestDisparity = d;
+            }
+          }
+
+          if (bestDisparity > 0 && bestDisparity < vzratioTotal_ - 1) {
+            int centerCostValue = costSumCurrent[bestDisparity];
+            int leftCostValue = costSumCurrent[bestDisparity - 1];
+            int rightCostValue = costSumCurrent[bestDisparity + 1];
+            if (rightCostValue < leftCostValue) {
+              bestDisparity = static_cast<int>(
+                  bestDisparity * vzratioFactor_ +
+                  static_cast<double>(rightCostValue - leftCostValue) /
+                      (centerCostValue - leftCostValue) / 2.0 * vzratioFactor_ +
+                  0.5);
+            } else {
+              bestDisparity = static_cast<int>(
+                  bestDisparity * vzratioFactor_ +
+                  static_cast<double>(rightCostValue - leftCostValue) /
+                      (centerCostValue - rightCostValue) / 2.0 *
+                      vzratioFactor_ +
+                  0.5);
+            }
+          } else {
+            bestDisparity = static_cast<int>(bestDisparity * vzratioFactor_);
+          }
+
+          disparityRow[x] = static_cast<unsigned short>(bestDisparity);
+        }
+      }
+
+      std::swap(pathCosts[0], pathCosts[1]);
+      std::swap(pathMinCosts[0], pathMinCosts[1]);
+    }
+  }
+  delete[] pathCosts;
+  delete[] pathMinCosts;
+
+  speckleFilter(100, static_cast<int>(2 * vzratioFactor_), vzratioImage);
+}
+
+void SGMFlow::speckleFilter(const int maxSpeckleSize, const int maxDifference,
+                            unsigned short *image) const {
+  std::vector<int> labels(width_ * height_, 0);
+  std::vector<bool> regionTypes(1);
+  regionTypes[0] = false;
+
+  int currentLabelIndex = 0;
+
+  for (int y = 0; y < height_; ++y) {
+    for (int x = 0; x < width_; ++x) {
+      int pixelIndex = width_ * y + x;
+      if (image[width_ * y + x] != 0) {
+        if (labels[pixelIndex] > 0) {
+          if (regionTypes[labels[pixelIndex]]) {
+            image[width_ * y + x] = 0;
+          }
+        } else {
+          std::stack<int> wavefrontIndices;
+          wavefrontIndices.push(pixelIndex);
+          ++currentLabelIndex;
+          regionTypes.push_back(false);
+          int regionPixelTotal = 0;
+          labels[pixelIndex] = currentLabelIndex;
+
+          while (!wavefrontIndices.empty()) {
+            int currentPixelIndex = wavefrontIndices.top();
+            wavefrontIndices.pop();
+            int currentX = currentPixelIndex % width_;
+            int currentY = currentPixelIndex / width_;
+            ++regionPixelTotal;
+            unsigned short pixelValue = image[width_ * currentY + currentX];
+
+            if (currentX < width_ - 1 && labels[currentPixelIndex + 1] == 0 &&
+                image[width_ * currentY + currentX + 1] != 0 &&
+                std::abs(pixelValue -
+                         image[width_ * currentY + currentX + 1]) <=
+                    maxDifference) {
+              labels[currentPixelIndex + 1] = currentLabelIndex;
+              wavefrontIndices.push(currentPixelIndex + 1);
+            }
+
+            if (currentX > 0 && labels[currentPixelIndex - 1] == 0 &&
+                image[width_ * currentY + currentX - 1] != 0 &&
+                std::abs(pixelValue -
+                         image[width_ * currentY + currentX - 1]) <=
+                    maxDifference) {
+              labels[currentPixelIndex - 1] = currentLabelIndex;
+              wavefrontIndices.push(currentPixelIndex - 1);
+            }
+
+            if (currentY < height_ - 1 &&
+                labels[currentPixelIndex + width_] == 0 &&
+                image[width_ * (currentY + 1) + currentX] != 0 &&
+                std::abs(pixelValue -
+                         image[width_ * (currentY + 1) + currentX]) <=
+                    maxDifference) {
+              labels[currentPixelIndex + width_] = currentLabelIndex;
+              wavefrontIndices.push(currentPixelIndex + width_);
+            }
+
+            if (currentY > 0 && labels[currentPixelIndex - width_] == 0 &&
+                image[width_ * (currentY - 1) + currentX] != 0 &&
+                std::abs(pixelValue -
+                         image[width_ * (currentY - 1) + currentX]) <=
+                    maxDifference) {
+              labels[currentPixelIndex - width_] = currentLabelIndex;
+              wavefrontIndices.push(currentPixelIndex - width_);
+            }
+          }
+
+          if (regionPixelTotal <= maxSpeckleSize) {
+            regionTypes[currentLabelIndex] = true;
+            image[width_ * y + x] = 0;
+          }
+        }
+      }
+    }
+  }
+}
+
+void SGMFlow::enforceLeftRightConsistency(
+    unsigned short *leftVZRatioImage,
+    unsigned short *leftplusVZRatioImage) const {
+  // Check left disparity image
+
+  for (int y = 0; y < height_; ++y) {
+    for (int x = 0; x < width_; ++x) {
+      if (leftVZRatioImage[width_ * y + x] == 0)
+        continue;
+
+      int leftDisparityValue = static_cast<int>(
+          static_cast<double>(leftVZRatioImage[width_ * y + x]) /
+              vzratioFactor_ +
+          0.5);
+      if (x - leftDisparityValue < 0) {
+        leftVZRatioImage[width_ * y + x] = 0;
+        continue;
+      }
+
+      int rightDisparityValue = static_cast<int>(
+          static_cast<double>(
+              leftplusVZRatioImage[width_ * y + x - leftDisparityValue]) /
+              vzratioFactor_ +
+          0.5);
+      if (rightDisparityValue == 0 ||
+          abs(leftDisparityValue - rightDisparityValue) >
+              consistencyThreshold_) {
+        leftVZRatioImage[width_ * y + x] = 0;
+      }
+    }
+  }
+
+  // Check right disparity image
+  for (int y = 0; y < height_; ++y) {
+    for (int x = 0; x < width_; ++x) {
+      if (leftplusVZRatioImage[width_ * y + x] == 0)
+        continue;
+
+      int rightDisparityValue = static_cast<int>(
+          static_cast<double>(leftplusVZRatioImage[width_ * y + x]) /
+              vzratioFactor_ +
+          0.5);
+      if (x + rightDisparityValue >= width_) {
+        leftplusVZRatioImage[width_ * y + x] = 0;
+        continue;
+      }
+
+      int leftDisparityValue = static_cast<int>(
+          static_cast<double>(
+              leftVZRatioImage[width_ * y + x + rightDisparityValue]) /
+              vzratioFactor_ +
+          0.5);
+      if (leftDisparityValue == 0 ||
+          abs(rightDisparityValue - leftDisparityValue) >
+              consistencyThreshold_) {
+        leftplusVZRatioImage[width_ * y + x] = 0;
+      }
     }
   }
 }

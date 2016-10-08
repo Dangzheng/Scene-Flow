@@ -28,7 +28,7 @@ int main(int argc, char *argv[]) {
 
   SPSFlow flow;
   //首先确认参数设置正确。
-  flow.setOutputVZRatio(90);
+  flow.setOutputVZRatio(128);
   flow.setIterationTotal(outerIterationTotal, innerIterationTotal);
   flow.setWeightParameter(lambda_pos, lambda_depth, lambda_bou, lambda_smo);
   flow.setInlierThreshold(lambda_d);
