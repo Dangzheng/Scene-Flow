@@ -1,5 +1,5 @@
 #Project
-cmake_minimum_required(VERSION 2.4)
+cmake_minimum_required(VERSION 3.6)
 project(flow)
 
 #Flags
@@ -18,4 +18,6 @@ add_executable(flow ${FLOW_SRC_FILES})
 
 target_link_libraries(flow ${OpenCV_LIBS} png)
 
+# usage
+# cmake -D CMAKE_PREFIX_PATH=/Users/Zheng/opencv3 .
 

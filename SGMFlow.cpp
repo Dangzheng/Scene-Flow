@@ -1,4 +1,5 @@
 #include "SGMFlow.h"
+#include "RobustMatcher.h"
 #include <algorithm>
 #include <math.h>
 #include <nmmintrin.h>
@@ -17,11 +18,11 @@ const int SGMFLOW_DEFAULT_VZRATIO_TOTAL = 256;
 const double SGMFLOW_DEFAULT_VZRATIO_FACTOR = 256;
 const int SGMFLOW_DEFAULT_SOBEL_CAP_VALUE = 15;
 const int SGMFLOW_DEFAULT_CENSUS_WINDOW_RADIUS = 2;
-const double SGMFLOW_DEFAULT_CENSUS_WEIGHT_FACTOR = 1.0 / 6.0;
+const double SGMFLOW_DEFAULT_CENSUS_WEIGHT_FACTOR = 0.7;
 const int SGMFLOW_DEFAULT_AGGREGATION_WINDOW_RADIUS = 2;
-const int SGMFLOW_DEFAULT_SMOOTHNESS_PENALTY_SMALL = 100;
-const int SGMFLOW_DEFAULT_SMOOTHNESS_PENALTY_LARGE = 1600;
-const int SGMFLOW_DEFAULT_CONSISTENCY_THRESHOLD = 1;
+const int SGMFLOW_DEFAULT_SMOOTHNESS_PENALTY_SMALL = 105;
+const int SGMFLOW_DEFAULT_SMOOTHNESS_PENALTY_LARGE = 6450;
+const int SGMFLOW_DEFAULT_CONSISTENCY_THRESHOLD = 3;
 
 SGMFlow::SGMFlow()
     : vzratioTotal_(SGMFLOW_DEFAULT_VZRATIO_TOTAL),
@@ -105,24 +106,39 @@ void SGMFlow::compute(const png::image<png::rgb_pixel> &leftImage,
   initialize(leftImage, leftplusImage);
   calcEpipoleRotaionVector(leftImageFilename, leftplusImageFilename);
   computeCostImage(leftImage, leftplusImage);
+
   unsigned short *leftVZRatioImage = reinterpret_cast<unsigned short *>(
       malloc(width_ * height_ * sizeof(unsigned short)));
   performSGM(leftCostImage_, leftVZRatioImage);
   unsigned short *leftplusVZRatioImage = reinterpret_cast<unsigned short *>(
       malloc(width_ * height_ * sizeof(unsigned short)));
-  performSGM(leftplusCostImage_, leftplusVZRatioImage);
-  enforceLeftRightConsistency(leftVZRatioImage, leftplusVZRatioImage);
-  std::cout << "今晚要上演的是：一幕失落的世界..." << std::endl;
-  cv::Mat outputImage(height_, width_, CV_32F);
+  png::image<png::gray_pixel> image(width_, height_);
   for (int y = 0; y < height_; ++y) {
     for (int x = 0; x < width_; ++x) {
       vzratioImage[width_ * y + x] =
           static_cast<float>(leftVZRatioImage[width_ * y + x] / vzratioFactor_);
-      outputImage.at<float>(y, x) = vzratioImage[width_ * y + x];
+      // outputImage.at<float>(y, x) = vzratioImage[width_ * y + x];
+      image[y][x] = vzratioImage[width_ * y + x];
     }
   }
-  cv::imshow("OutputVZratioImage", outputImage);
-  cv::waitKey(0);
+  // performSGM(leftplusCostImage_, leftplusVZRatioImage);
+  // enforceLeftRightConsistency(leftVZRatioImage, leftplusVZRatioImage);
+  // std::cout << "今晚要上演的是：一幕失落的世界..." << std::endl;
+  //
+  // png::image<png::gray_pixel> image(width_, height_);
+  // for (int y = 0; y < height_; ++y) {
+  //   for (int x = 0; x < width_; ++x) {
+  //     vzratioImage[width_ * y + x] =
+  //         static_cast<float>(leftVZRatioImage[width_ * y + x] /
+  //         vzratioFactor_);
+  //     // outputImage.at<float>(y, x) = vzratioImage[width_ * y + x];
+  //     image[y][x] = vzratioImage[width_ * y + x];
+  //   }
+  // }
+
+  // cv::imshow("OutputVZratioImage", outputImage);
+  image.write("out.png");
+  std::cout << "the output file has been written..." << std::endl;
   freeDataBuffer();
   free(leftVZRatioImage);
   free(leftplusVZRatioImage);
@@ -189,368 +205,86 @@ void SGMFlow::freeDataBuffer() {
 void SGMFlow::calcEpipoleRotaionVector(std::string leftImageFilename,
                                        std::string leftplusImageFilename) {
   cv::Mat leftImage, leftplusImage;
-  std::cout << "Garrosh，你不配统治部落！！！" << std::endl;
   leftImage = cv::imread(leftImageFilename, 1);
   leftplusImage = cv::imread(leftplusImageFilename, 1);
   // cv::imshow("Flow_image_left", leftImage);
   // cv::imshow("Flow_image_leftplus", leftplusImage);
-  // cv::waitKey(0);
-  // SIFT
-  cv::SiftFeatureDetector siftdtc;
-  cv::vector<cv::KeyPoint> kp0, kp1;
-  cv::Mat Keypoint0, Keypoint1;
+  // SURF
+  RobustMatcher rmatcher;
+  rmatcher.setConfidenceLevel(0.99);
+  rmatcher.setMinDistanceToEpipolar(0.1);
+  rmatcher.setRatio(0.65f);
+  cv::Ptr<cv::FeatureDetector> pfd = new cv::SurfFeatureDetector(10);
+  rmatcher.setFeatureDetector(pfd);
 
-  siftdtc.detect(leftImage, kp0);
-  // drawKeypoints(leftImage, kp0, Keypoint0);
-  // imshow("leftImage_keypoints",Keypoint0);
-  // waitKey(0);
-  /*
-  vector<KeyPoint>::iterator itvc;
+  std::vector<cv::DMatch> matches;
+  std::vector<cv::KeyPoint> keypointsL, keypointsLP;
+  cv::Mat fundamental = rmatcher.match(leftImage, leftplusImage, matches,
+                                       keypointsL, keypointsLP);
+  epipoleX = rmatcher.x();
+  epipoleY = rmatcher.y();
 
-  for(itvc=kp0.begin();itvc!=kp0.end();itvc++)
-  {
-      std::cout<<"angle:"<<itvc->angle<<"\t"<<itvc->class_id<<"\t"<<itvc->octave<<"\t"<<itvc->pt<<"\t"<<itvc->response<<std::endl;
-  }
-  */
-  // angle表示特征点的方向，负值表示不使用
-  // class_id表示聚类的ID
-  // pt 表示坐标
+  // //在右图中绘制极线
+  // int ptCount = matches.size();
+  // cv::vector<cv::Point2f> selPointsL(ptCount);
+  // cv::vector<cv::Point2f> selPointsLP(ptCount);
+  // cv::Point2f pt;
+  // for (int i = 0; i < ptCount; i++) {
+  //   pt = keypointsLP[matches[i].queryIdx].pt;
+  //   selPointsL[i].x = pt.x;
+  //   selPointsL[i].y = pt.y;
+  //   pt = keypointsLP[matches[i].trainIdx].pt;
+  //   selPointsLP[i].x = pt.x;
+  //   selPointsLP[i].y = pt.y;
+  // }
+  // // draw epipoline
+  // //
+  // std::vector<cv::Vec3f> lines1;
+  // cv::computeCorrespondEpilines(cv::Mat(selPointsL), 1, fundamental, lines1);
+  // for (std::vector<cv::Vec3f>::const_iterator it = lines1.begin();
+  //      it != lines1.end(); ++it) {
+  //   cv::line(leftplusImage, cv::Point(0, -(*it)[2] / (*it)[1]),
+  //            cv::Point(leftplusImage.cols,
+  //                      -((*it)[2] + (*it)[0] * leftplusImage.cols) /
+  //                      (*it)[1]),
+  //            cv::Scalar(200, 0, 0));
+  // }
+  // cv::imshow("leftplus", leftplusImage);
 
-  siftdtc.detect(leftplusImage, kp1);
-  // drawKeypoints(leftplusImage, kp1, Keypoint1);
-  cv::SiftDescriptorExtractor extractor;
-  cv::Mat descriptor0, descriptor1;
-  cv::BruteForceMatcher<cv::L2<float>> matcher;
-  cv::vector<cv::DMatch> matches;
-  cv::Mat MatchesImage;
-  extractor.compute(leftImage, kp0, descriptor0);
-  extractor.compute(leftplusImage, kp1, descriptor1);
-  // imshow("descriptor",descriptor0);
-  // waitKey(0);
-  // std::cout<<std::endl<<descriptor0<<std::endl;
-  matcher.match(descriptor0, descriptor1, matches);
-  cv::drawMatches(leftImage, kp0, leftplusImage, kp1, matches, MatchesImage);
-  cv::vector<int> compression_params;
-  compression_params.push_back(CV_IMWRITE_PNG_COMPRESSION);
-  compression_params.push_back(9);
-  imwrite("before.png", MatchesImage, compression_params);
-  // imshow("Match",MatchesImage);
-  // waitKey(0);
-
-  // LMeds或者8-points估计fundamental matrix
-
-  // kp0,kp1为feature points需要将其转换array
-  int ptCount = matches.size();
-  cv::vector<cv::Point2f> points0(ptCount);
-  cv::vector<cv::Point2f> points1(ptCount);
-  cv::Point2f pt;
-  for (int i = 0; i < ptCount; i++) {
-    pt = kp0[matches[i].queryIdx].pt;
-    points0[i].x = pt.x;
-    points0[i].y = pt.y;
-    pt = kp1[matches[i].trainIdx].pt;
-    points1[i].x = pt.x;
-    points1[i].y = pt.y;
-  }
-
-  //根据第一次的计算结果去除outlier和误差大的点。
-  cv::Mat FundamentalMatrix;
-  cv::vector<uchar> LMedsStatus;
-  FundamentalMatrix =
-      findFundamentalMat(points0, points1, CV_FM_LMEDS, 3, 0.99, LMedsStatus);
-  int Outliers = 0;
-  for (int i = 0; i < ptCount; i++) {
-    if (LMedsStatus[i] == 0) {
-      Outliers++;
-    }
-  }
-  // std::cout << "Outliers:" << Outliers << std::endl;
-  // std::cout << "ptCount:" << ptCount << std::endl;
-  //根据点的status来去除outlier。
-
-  cv::vector<cv::Point2f> pt0_inlier;
-  cv::vector<cv::Point2f> pt1_inlier;
-  cv::vector<cv::DMatch> InlierMatches;
-  int InlierCount = ptCount - Outliers;
-  InlierMatches.resize(InlierCount);
-  pt0_inlier.resize(InlierCount);
-  pt1_inlier.resize(InlierCount);
-  InlierCount = 0;
-  for (int i = 0; i < ptCount; i++) {
-    if (LMedsStatus[i] != 0) {
-      pt0_inlier[InlierCount].x = points0[i].x;
-      pt0_inlier[InlierCount].y = points0[i].y;
-      pt1_inlier[InlierCount].x = points1[i].x;
-      pt1_inlier[InlierCount].y = points1[i].y;
-      InlierMatches[InlierCount].queryIdx = InlierCount;
-      InlierMatches[InlierCount].trainIdx = InlierCount;
-      InlierCount++;
-    }
-  }
-  FundamentalMatrix =
-      findFundamentalMat(pt0_inlier, pt1_inlier, CV_FM_LMEDS, 3, 0.99);
-  cv::vector<cv::KeyPoint> key0(InlierCount);
-  cv::vector<cv::KeyPoint> key1(InlierCount);
-  cv::KeyPoint::convert(pt0_inlier, key0);
-  cv::KeyPoint::convert(pt1_inlier, key1);
-  drawMatches(leftImage, key0, leftplusImage, key1, InlierMatches,
-              MatchesImage);
-  imwrite("after.png", MatchesImage, compression_params);
-  // imshow("Match",MatchesImage);
-  // waitKey(0);
-  /*
-  FileStorage fs("FundamentalMat.xml", FileStorage::WRITE);
-  fs << "fundamentalMat" <<FundamentalMatrix;
-  fs.release();
-  */
-
-  // CALIBRATION QUALITY CHECK
-  // epipolar geometry constraint: m2^t*F*m1=0
-  double err = 0;
-  int npoints = 0;
-  int nimages = 1;
-  cv::vector<cv::Vec3f> lines[2];
-  cv::vector<cv::vector<cv::Point2f>> imagePoints[2];
-  imagePoints[0].resize(nimages);
-  imagePoints[1].resize(nimages);
-  imagePoints[0][0] = pt0_inlier;
-  imagePoints[1][0] = pt1_inlier;
-  int err_count = 0;
-  cv::vector<cv::Point2f> errpt_0;
-  cv::vector<cv::Point2f> errpt_1;
-  errpt_0.resize(InlierCount);
-  errpt_1.resize(InlierCount);
-  for (int i = 0; i < nimages; i++) {
-    cv::Mat imgpt[2];
-    int npt = (int)imagePoints[0][i].size();
-
-    for (int k = 0; k < 2; k++) {
-      imgpt[k] = cv::Mat(imagePoints[k][i]);
-      computeCorrespondEpilines(imgpt[k], k + 1, FundamentalMatrix, lines[k]);
-      //绘制极线
-      /*
-      RNG &rng = theRNG();
-      if (k == 1) {
-        for (int i = 0; i < pt1_inlier.size(); i++) {
-          Scalar color = Scalar(rng(256), rng(256), rng(256));
-          cv::circle(leftplusImage, pt1_inlier[i], 5, color);
-          cv::line(leftplusImage, Point(0, -lines[k][i][2] / lines[k][i][1]),
-                   Point(leftplusImage.cols,
-                         -(lines[k][i][2] + lines[k][i][0] * leftImage.cols) /
-                             lines[k][i][1]),
-                   color);
-
-          cv::imshow("leftImagePlus's epiline", leftplusImage);
-          waitKey(0);
-        }
-      }
-      */
-      //计算右图像的极点，利用的是两条直线的交点，所有的匹配点对两两成对，然后计算出一堆
-      //极点的备选点，计算这些点的均值和方差用于滤除outlier
-      cv::Mat epipole_mean_x, epipole_mean_y;
-      if (k == 1) {
-        cv::Point2f inter_pt, o0, o1, p0, p1;
-        cv::Mat epipole_mean_x, epipole_var_x, epipole_var_y;
-        cv::Mat epipole_x(pt1_inlier.size() - 1, 1, CV_32F);
-        cv::Mat epipole_y(pt1_inlier.size() - 1, 1, CV_32F);
-
-        for (int i = 0; i < pt1_inlier.size() - 1; i++) {
-          o0.x = 0;
-          o0.y = -lines[k][i][2] / lines[k][i][1];
-          p0.x = leftplusImage.cols;
-          p0.y = -(lines[k][i][2] + lines[k][i][0] * leftImage.cols) /
-                 lines[k][i][1];
-          o1.x = 0;
-          o1.y = -lines[k][i + 1][2] / lines[k][i + 1][1];
-          p1.x = leftplusImage.cols;
-          p1.y = -(lines[k][i + 1][2] + lines[k][i + 1][0] * leftImage.cols) /
-                 lines[k][i + 1][1];
-          interscetion(inter_pt, o0, p0, o1, p1);
-          epipole_x.at<float>(i, 0) = inter_pt.x;
-          epipole_y.at<float>(i, 0) = inter_pt.y;
-
-          /*
-          Scalar color = Scalar(rng(256), rng(256), rng(256));
-          cv::circle(leftplusImage, inter_pt, 5, color);
-          imshow("leftImagePlus's epipole", leftplusImage);
-          waitKey(0);
-          std::cout << "cross point is:" << inter_pt.x << "," << inter_pt.y
-                    << std::endl;
-          */
-        }
-        meanStdDev(epipole_x, epipole_mean_x, epipole_var_x);
-        meanStdDev(epipole_y, epipole_mean_y, epipole_var_y);
-        cv::Mat temp_x, temp_y;
-        for (int i = 0; i < epipole_x.rows; i++) {
-
-          if (fabs(epipole_x.at<float>(i, 0) -
-                   epipole_mean_x.at<double>(0, 0)) < 0.1) {
-            temp_x.push_back(epipole_x.at<float>(i, 0));
-          }
-          if (fabs(epipole_y.at<float>(i, 0) -
-                   epipole_mean_y.at<double>(0, 0)) < 0.1) {
-            temp_y.push_back(epipole_y.at<float>(i, 0));
-          }
-        }
-        swap(epipole_x, temp_x);
-        swap(epipole_y, temp_y);
-        meanStdDev(epipole_x, epipole_mean_x, epipole_var_x);
-        meanStdDev(epipole_y, epipole_mean_y, epipole_var_y);
-        std::cout << "epipole coordinate: (" << epipole_mean_x << ","
-                  << epipole_mean_y << ")" << std::endl;
-        std::cout << "epipole coordinate variance:" << epipole_var_x << "/"
-                  << epipole_var_y << std::endl;
-        epipoleX = epipole_mean_x.at<double>(0, 0);
-        epipoleY = epipole_mean_y.at<double>(0, 0);
-        /* std::cout << std::fixed << std::setprecision(7) << "X,Y: (" <<
-           epipoleX
-                << "," << epipoleY << ")" << std::endl;
-        */
-        // test:延极线方向的运动
-        // 首先，先找到一个点，然后画出他的极线
-        int i_t = 2;
-        cv::RNG &rng = cv::theRNG();
-        cv::Scalar color = cv::Scalar(rng(256), rng(256), rng(256));
-        cv::circle(leftplusImage, pt1_inlier[i_t], 5, color, -1);
-        cv::line(
-            leftplusImage, cv::Point(0, -lines[k][i_t][2] / lines[k][i_t][1]),
-            cv::Point(leftplusImage.cols,
-                      -(lines[k][i_t][2] + lines[k][i_t][0] * leftImage.cols) /
-                          lines[k][i_t][1]),
-            color);
-        cv::Point2f epipole_pt;
-        epipole_pt.x = epipole_mean_x.at<double>(0, 0);
-        epipole_pt.y = epipole_mean_y.at<double>(0, 0);
-        color = cv::Scalar(rng(0), rng(256), rng(0));
-        cv::circle(leftplusImage, epipole_pt, 5, color, -1);
-
-        float x = epipole_pt.x - pt1_inlier[i_t].x;
-        float y = epipole_pt.y - pt1_inlier[i_t].y;
-        float square_root = sqrt(pow(x, 2) + pow(y, 2));
-        x = x / square_root;
-        y = y / square_root;
-        float d_epipolar = 40;
-        x = d_epipolar * x;
-        y = d_epipolar * y;
-        cv::Point2f incremental;
-        incremental.x = pt1_inlier[i_t].x + x;
-        incremental.y = pt1_inlier[i_t].y + y;
-        cv::circle(leftplusImage, incremental, 5, color);
-        // cv::imshow("one of the leftImagePlus's epiline", leftplusImage);
-        // waitKey(0);
-      }
-    }
-    for (int j = 0; j < InlierCount; j++) {
-      double errij =
-          fabs(imagePoints[0][i][j].x * lines[1][j][0] +
-               imagePoints[0][i][j].y * lines[1][j][1] + lines[1][j][2]) +
-          fabs(imagePoints[1][i][j].x * lines[0][j][0] +
-               imagePoints[1][i][j].y * lines[0][j][1] + lines[0][j][2]);
-      // 齐次表示形式。
-      err += errij;
-      if (0.01 > errij && errij > 0) {
-        errpt_0[err_count].x = imagePoints[0][i][j].x;
-        errpt_0[err_count].y = imagePoints[0][i][j].y;
-        errpt_1[err_count].x = imagePoints[1][i][j].x;
-        errpt_1[err_count].y = imagePoints[1][i][j].y;
-        /*
-        std::cout << "image 0 coordinate:(" << errpt_0[err_count].x << ","
-                  << errpt_0[err_count].y << ")" << std::endl;
-        std::cout << "image 1 coordinate:(" << errpt_1[err_count].x << ","
-                  << errpt_1[err_count].y << ")" << std::endl;
-        std::cout << "error:" << errij << std::endl;
-        */
-        err_count++;
-      }
-    }
-    npoints += npt;
-  }
-  std::cout << "average reprojection err = " << err / npoints << std::endl;
-  std::cout << "err_count = " << err_count << std::endl;
-  cv::vector<cv::DMatch> err_Matches;
-  err_Matches.resize(err_count);
-  for (int i = 0; i < err_count; i++) {
-    err_Matches[i].queryIdx = i;
-    err_Matches[i].trainIdx = i;
-  }
-  cv::vector<cv::KeyPoint> err_key0(InlierCount);
-  cv::vector<cv::KeyPoint> err_key1(InlierCount);
-  cv::KeyPoint::convert(errpt_0, err_key0);
-  cv::KeyPoint::convert(errpt_1, err_key1);
-  cv::drawMatches(leftImage, err_key0, leftImage, err_key1, InlierMatches,
-                  MatchesImage);
-  cv::imwrite("error.png", MatchesImage, compression_params);
-
-  //利用基础矩阵和相机内参求本质矩阵，SVD分解求相机旋转。
-  cv::Mat K_t_2, K_t_3;                              //相机的内参矩阵。
-  cv::Mat F(FundamentalMatrix.size(), K_t_2.type()); //数据类型转换。
-  FundamentalMatrix.convertTo(F, CV_32FC1);
-
-  /*从文件中读取未完成
-  std::fstream calib;
-  calib.open("calib.txt");
-  if (!calib.is_open()){
-      std::cout<<"Error when loading calib result...";exit(1);
-  }
-  char buffer[300];
-  while(!calib.eof() ){
-      calib.getline(buffer,300);
-      std::cout<<buffer<<std::endl;
-  }
-  calib.close();
-  */
-
-  K_t_2 = (cv::Mat_<float>(3, 3) << 721.537700, 0.000000, 609.559300, 0.000000,
-           721.537700, 172.854000, 0.000000, 0.000000, 1.000000);
-  K_t_3 = (cv::Mat_<float>(3, 3) << 721.537700, 0.000000, 609.559300, 0.000000,
-           721.537700, 172.854000, 0.000000, 0.000000, 1.000000);
-  //相机中心的坐标
-
-  cv::Mat EssentialMat;
-  EssentialMat = K_t_2.t() * F * K_t_2;
-  std::cout << "F:" << std::endl << F << std::endl;
-
-  //基础矩阵计算的应该是没有问题，计算秩确实为2.
-  cv::Mat U, W, Vt, Rotation;
-  cv::SVD::compute(EssentialMat, W, U, Vt);
-  // std::cout << "E:" << std::endl << EssentialMat << std::endl;
-  // 照计算机视觉中的多视图几何（9.14）公式写的。
-  W = (cv::Mat_<float>(3, 3) << 0, -1, 0, 1, 0, 0, 0, 0, 1);
-  Rotation = U * W * Vt;
-  // std::cout << "Rotation:" << std::endl << Rotation << std::endl;
-  cv::Mat col = (cv::Mat_<float>(3, 1) << 0, 0, 1);
-  cv::Mat t = U * col;
+  cv::Mat R;
+  cv::Mat K(3, 3, CV_64F);
+  cv::Mat W(3, 3, CV_64F);
+  // KITTI2015
+  // K = (cv::Mat_<double>(3, 3) << 721.537700, 0.000000, 609.559300, 0.000000,
+  //      721.537700, 172.854000, 0.000000, 0.000000, 1.000000);
+  // KITTI2012
+  K = (cv::Mat_<double>(3, 3) << 707.091200, 0.000000, 601.887300, 0.000000,
+       707.091200, 183.110400, 0.000000, 0.000000, 1.000000);
+  // K = (cv::Mat_<double>(3, 3) << 718.856000, 0.000000, 607.192800, 0.000000,
+  //      718.856000, 185.215700, 0.000000, 0.000000, 1.000000);
+  cv::SVD svd(K.t() * fundamental * K, cv::SVD::MODIFY_A);
+  W = (cv::Mat_<double>(3, 3) << 0, -1, 0, 1, 0, 0, 0, 0, 1);
+  R = svd.u * W * svd.vt;
+  std::cout << "fundamental:" << std::endl << fundamental << std::endl;
+  std::cout << "rotation:" << std::endl << R << std::endl;
+  // cv::Mat t = svd.u.col(2);
   // std::cout << "t:" << std::endl << t << std::endl;
   cv::Mat vector_Rot, vector_Rot_Inverse;
-  cv::Rodrigues(Rotation, vector_Rot);
-  cv::Rodrigues(Rotation.t(), vector_Rot_Inverse);
-  std::cout << "Rotation_vector:" << std::endl << vector_Rot << std::endl;
-  std::cout << "Rotation_vector_inverse:" << std::endl
-            << vector_Rot_Inverse << std::endl;
-  // t -> t+1
-  wx_t = vector_Rot.at<float>(0, 0);
-  wy_t = vector_Rot.at<float>(0, 1);
-  wz_t = vector_Rot.at<float>(0, 2);
+  cv::Rodrigues(R, vector_Rot);
+  cv::Rodrigues(R.t(), vector_Rot_Inverse);
+  std::cout << "rotation_vector:" << std::endl << vector_Rot << std::endl;
+
+  wx_t = vector_Rot.at<double>(0, 0);
+  wy_t = vector_Rot.at<double>(0, 1);
+  wz_t = vector_Rot.at<double>(0, 2);
+  std::cout << wx_t << std::endl;
+  std::cout << wy_t << std::endl;
+  std::cout << wz_t << std::endl;
   // t+1 -> t
-  wx_inv = vector_Rot_Inverse.at<float>(0, 0);
-  wy_inv = vector_Rot_Inverse.at<float>(0, 1);
-  wz_inv = vector_Rot_Inverse.at<float>(0, 2);
+  wx_inv = vector_Rot_Inverse.at<double>(0, 0);
+  wy_inv = vector_Rot_Inverse.at<double>(0, 1);
+  wz_inv = vector_Rot_Inverse.at<double>(0, 2);
 }
-
-bool SGMFlow::interscetion(cv::Point2f &inter_pt, cv::Point2f o1,
-                           cv::Point2f p1, cv::Point2f o2, cv::Point2f p2) {
-  cv::Point2f x = o2 - o1;
-  cv::Point2f d1 = p1 - o1;
-  cv::Point2f d2 = p2 - o2;
-
-  float cross = d1.x * d2.y - d1.y * d2.x;
-  if (std::abs(cross) < /*EPS*/ 1e-8)
-    return false;
-
-  double t1 = (x.x * d2.y - x.y * d2.x) / cross;
-  inter_pt = o1 + d1 * t1;
-  return true;
-};
 
 void SGMFlow::computeCostImage(
     const png::image<png::rgb_pixel> &leftImage,
@@ -563,10 +297,9 @@ void SGMFlow::computeCostImage(
                      leftplusGrayscaleImage);
   memset(leftCostImage_, 0,
          width_ * height_ * vzratioTotal_ * sizeof(unsigned short));
-  std::cout << "今晚要上演的是!!!一幕光荣的救赎..." << std::endl;
+  std::cout << "starting calc cost..." << std::endl;
   computeLeftCostImage(leftGrayscaleImage, leftplusGrayscaleImage);
-  //这个函数是执行SGM算法的核心函数，如果想要把Stereo改成flow那么应该在这�����位置将极线几何部分的变换修改一下就行了。
-  computeLeftPlusCostImage();
+  // computeLeftPlusCostImage();
 
   free(leftGrayscaleImage);
   free(leftplusGrayscaleImage);
@@ -577,6 +310,7 @@ void SGMFlow::convertToGrayscale(
     const png::image<png::rgb_pixel> &leftplusImage,
     unsigned char *leftGrayscaleImage,
     unsigned char *leftplusGrayscaleImage) const {
+
   for (int y = 0; y < height_; ++y) {
     for (int x = 0; x < width_; ++x) {
       png::rgb_pixel pix = leftImage.get_pixel(x, y);
@@ -587,6 +321,30 @@ void SGMFlow::convertToGrayscale(
           0.299 * pix.red + 0.587 * pix.green + 0.114 * pix.blue + 0.5);
     }
   }
+  //
+  // for (int y = 0; y < height_; ++y) {
+  //   for (int x = 0; x < width_; ++x) {
+  //     png::rgb_pixel pix = leftImage.get_pixel(x, y);
+  //     leftGrayscaleImage[width_ * y + x] = static_cast<unsigned
+  //     char>(pix.red);
+  //     pix = leftplusImage.get_pixel(x, y);
+  //     leftplusGrayscaleImage[width_ * y + x] =
+  //         static_cast<unsigned char>(pix.red);
+  //   }
+  // }
+  //
+  //
+  // png::image<png::gray_pixel> image(width_, height_);
+  // for (int y = 0; y < height_; ++y) {
+  //   for (int x = 0; x < width_; ++x) {
+  //     leftGrayscaleImage[width_ * y + x] =
+  //         static_cast<float>(leftGrayscaleImage[width_ * y + x]);
+  //     // outputImage.at<float>(y, x) = vzratioImage[width_ * y + x];
+  //     image[y][x] = leftGrayscaleImage[width_ * y + x];
+  //   }
+  // }
+  // image.write("gray.png");
+  // std::cout << "the gray file has been written..." << std::endl;
 }
 
 void SGMFlow::computeLeftCostImage(
@@ -597,9 +355,19 @@ void SGMFlow::computeLeftCostImage(
       _mm_malloc(widthStep_ * height_ * sizeof(unsigned char), 16));
   leftplusSobelImage = reinterpret_cast<unsigned char *>(
       _mm_malloc(widthStep_ * height_ * sizeof(unsigned char), 16));
-  //此处用sobel算子来处理图像，sobel处理完的图像留下的都是图像的边缘，对左图像检测水平方向的边缘，对左plus检测垂直方向的边缘。
+
   computeCappedSobelIamge(leftGrayscaleImage, false, leftSobelImage);
   computeCappedSobelIamge(leftplusGrayscaleImage, true, leftplusSobelImage);
+//   png::image<png::gray_pixel> image(width_, height_);
+//   for (int y = 0; y < height_; ++y) {
+//     for (int x = 0; x < width_; ++x) {
+//       // image[y][x] = leftplusSobelImage[widthStep_ * y + x];
+//       image[y][x] = leftplusSobelImage[widthStep_ * y + width_ - 1 - x];
+//       //这样才能对上。
+//     }
+//   }
+//   image.write("sobel.png");
+//    cv::waitKey(0);
 
   leftCensusImage =
       reinterpret_cast<int *>(malloc(width_ * height_ * sizeof(int)));
@@ -608,12 +376,12 @@ void SGMFlow::computeLeftCostImage(
   computeCensusImage(leftGrayscaleImage, leftCensusImage);
   computeCensusImage(leftplusGrayscaleImage, leftplusCensusImage);
   //仅仅利用灰度图进行census计算。
-
   unsigned char *leftSobelRow = leftSobelImage;
   unsigned char *leftplusSobelRow = leftplusSobelImage;
   int *leftCensusRow = leftCensusImage;
   int *leftplusCensusRow = leftplusCensusImage;
   unsigned short *costImageRow = leftCostImage_;
+
   calcTopRowCost(leftSobelRow, leftCensusRow, leftplusSobelRow,
                  leftplusCensusRow, costImageRow, leftSobelImage,
                  leftplusSobelImage, leftCensusImage, leftplusCensusImage);
@@ -621,7 +389,8 @@ void SGMFlow::computeLeftCostImage(
   calcRowCosts(leftSobelRow, leftCensusRow, leftplusSobelRow, leftplusCensusRow,
                costImageRow, leftSobelImage, leftplusSobelImage,
                leftCensusImage, leftplusCensusImage);
-  //将sobel处理过的图片，census Image送到函数里面计算匹配代������
+  //将sobel处理过的图片，census
+  // Image送到函数里面计��������配���������������������������������������������������������������������������������������������
 }
 
 void SGMFlow::computeCappedSobelIamge(const unsigned char *image,
@@ -810,7 +579,6 @@ void SGMFlow::calcRowCosts(
           // wp = 2;
           // std::cout << "point -> value:" << int(*(addPixelwiseCost + wp))
           //           << std::endl;
-          // cv::waitKey(0);
           __m128i registerAddPixelwiseLow = _mm_load_si128(
               reinterpret_cast<const __m128i *>(addPixelwiseCost + wp));
           __m128i registerAddPixelwiseHigh =
@@ -886,8 +654,8 @@ void SGMFlow::calcPixelwiseSADHamming(
     const int *leftplusCensusRow, const int *leftCensusImage,
     const int *leftplusCensusImage, const int yIndex, const bool calcLeft) {
   //这个函数作为一个通用版本，既可以计算leftCostImage，又可以用于一致性校验计算leftplus图片
-  float vMax = 0.2 / 1;
-  int n = 256;
+  float vMax = 0.45;
+
   if (calcLeft == true) {
     //这里面之所以与原来不同，计算leftSobelRow而不是leftPlus的，因为flow寻找matching点
     //的时候是沿着极线方向进行搜索的，所以没有办法很好的预先计算出leftplus上被匹配的点。
@@ -895,58 +663,106 @@ void SGMFlow::calcPixelwiseSADHamming(
     int y = yIndex;
     for (int x = 0; x < width_; ++x) {
       int leftCenterValue = leftSobelRow[x];
+      double uwTransX, uwTransY;
+      // calculate the rotation
+      uwTransX = (f * wy_t - wz_t * y + wy_t * x * x / f - wx_t * x * y / f);
+      uwTransY = (-f * wx_t + wz_t * x + wy_t * x * y / f - wx_t * y * y / f);
+      // double a1, a2, a3, a4, a5;
+      // a1 = 1.796551571041166;
+      // a2 = -1.376330362339697;
+      // a3 = -0.001713217331441;
+      // a4 = -0.000071754795906;
+      // a5 = 0.000143306169912;
+      // uwTransX = a1 - a3 * y + a4 * x * x + a5 * x * y;
+      // uwTransY = a2 + a3 * x + a4 * x * y + a5 * y * y;
+      // distance between p and epipole o;
+      double distancePEpi = sqrt(pow(x + uwTransX - epipoleX, 2) +
+                                 pow(y + uwTransY - epipoleY, 2));
+      double directionX = x - epipoleX;
+      double directionY = y - epipoleY;
+      double length = sqrt(pow(directionX, 2) + pow(directionY, 2));
+      directionX = directionX / length;
+      directionY = directionY / length;
+
+      int xf_ = x + std::round(directionX) < width_ - 1 &&
+                        x + std::round(directionX) > 0
+                    ? x + std::round(directionX)
+                    : x;
+      int yf_ = y + std::round(directionY) < height_ - 1 &&
+                        y + std::round(directionY) > 0
+                    ? y + std::round(directionY)
+                    : y;
+      int xb_ = x - std::round(directionX) < width_ - 1 &&
+                        x - std::round(directionX) > 0
+                    ? x - std::round(directionX)
+                    : x;
+      int yb_ = y - std::round(directionY) < height_ - 1 &&
+                        y - std::round(directionY) > 0
+                    ? y - std::round(directionY)
+                    : y;
+
       int leftHalfLeftValue =
-          x > 0 ? (leftCenterValue + leftSobelRow[x - 1]) / 2 : leftCenterValue;
-      int leftHalfRightValue = x < width_ - 1
-                                   ? (leftCenterValue + leftSobelRow[x + 1]) / 2
-                                   : leftCenterValue;
+          x > 0 ? (leftCenterValue + leftSobelImage[widthStep_ * yf_ + xf_]) / 2
+                : leftCenterValue;
+
+      int leftHalfRightValue =
+          x < width_ - 1
+              ? (leftCenterValue + leftSobelImage[widthStep_ * yb_ + xb_]) / 2
+              : leftCenterValue;
       int leftMinValue = std::min(leftHalfLeftValue, leftHalfRightValue);
       leftMinValue = std::min(leftMinValue, leftCenterValue);
-      int leftMaxValue = std::min(leftHalfLeftValue, leftHalfRightValue);
+      int leftMaxValue = std::max(leftHalfLeftValue, leftHalfRightValue);
       leftMaxValue = std::max(leftMaxValue, leftCenterValue);
 
-      for (int wp = 0; wp <= vzratioTotal_; ++wp) {
-        double uwTransX, uwTransY;
-        // calculate the rotation
-        uwTransX = (f * wy_t - wz_t * y + wy_t * x * x / f - wx_t * x * y / f);
-        uwTransY = (-f * wx_t + wz_t * x + wy_t * x * y / f - wx_t * y * y / f);
-        // distance between p and epipole o;
-        double distancePEpi = sqrt(pow(x + uwTransX - epipoleX, 2) +
-                                   pow(y + uwTransY - epipoleY, 2));
+      for (int wp = 0; wp < vzratioTotal_; ++wp) {
+        double distanceRRhat = fabs(distancePEpi * wp * (vMax / vzratioTotal_) /
+                                    (1 - wp * (vMax / vzratioTotal_)));
+        int xPlus = x + std::round( uwTransX ) + std::ceil(directionX * distanceRRhat);
+        int yPlus = y + std::round( uwTransY ) + std::ceil(directionY * distanceRRhat);
+        int wpf = wp > 0 ? wp - 1 : 0;
+        int wpb = wp < vzratioTotal_ - 1 ? wp + 1 : wp;
+        double distf = fabs(distancePEpi * wpf * (vMax / vzratioTotal_) /
+                            (1 - wpf * (vMax / vzratioTotal_)));
+        double distb = fabs(distancePEpi * wpb * (vMax / vzratioTotal_) /
+                            (1 - wpb * (vMax / vzratioTotal_)));
+        int xf = x + std::ceil(uwTransX + directionX * distf);
+        int yf = y + std::ceil(uwTransY + directionY * distf);
+        int xb = x + std::ceil(uwTransX + directionX * distb);
+        int yb = y + std::ceil(uwTransY + directionY * distb);
+        xf = xf > 0 && xf < width_ - 1 ? xf : xPlus;
+        yf = yf > 0 && yf < height_ - 1 ? yf : yPlus;
+        xb = xb > 0 && xb < width_ - 1 ? xb : xPlus;
+        yb = yb > 0 && yb < height_ - 1 ? yb : yPlus;
 
-        double distanceRRhat =
-            distancePEpi * wp * (vMax / n) / (1 - wp * (vMax / n));
+//        int xf = xf_ + std::round(uwTransX)+std::ceil(directionX * distanceRRhat);
+//        int yf = yf_ + std::round(uwTransY)+std::ceil(directionY * distanceRRhat);
+//        int xb = xb_ + std::round(uwTransX)+std::ceil(directionX * distanceRRhat);
+//        int yb = yb_ + std::round(uwTransY)+std::ceil(directionY * distanceRRhat);
+//        xf = xf > 0 && xf < width_ - 1 ? xf : xPlus;
+//        yf = yf > 0 && yf < height_ - 1 ? yf : yPlus;
+//        xb = xb > 0 && xb < width_ - 1 ? xb : xPlus;
+//        yb = yb > 0 && yb < height_ - 1 ? yb : yPlus;
 
-        double directionX = x - epipoleX;
-        double directionY = y - epipoleY;
-        directionX = directionX / sqrt(pow(directionX, 2) + pow(directionY, 2));
-        directionY = directionY / sqrt(pow(directionX, 2) + pow(directionY, 2));
-        int xPlus = x + uwTransX + directionX * distanceRRhat;
-        int yPlus = y + uwTransY + directionY * distanceRRhat;
-
-        if (xPlus >= 0 && yPlus >= 0 && xPlus <= width_ && yPlus <= height_) {
-
+          if (xPlus >= 0 && yPlus >= 0 && xPlus < width_ && yPlus < height_) {
           int leftplusCenterValue =
-              leftplusSobelImage[widthStep_ * yPlus + width_ - xPlus - 1];
-          int leftHalfLeftValue =
+              leftplusSobelImage[widthStep_ * yPlus + width_ - 1 - xPlus];
+          int leftplusHalfLeftValue =
               xPlus > 0
                   ? (leftplusCenterValue +
-                     leftplusSobelImage[widthStep_ * yPlus + width_ -
-                                        (xPlus - 1) - 1]) /
+                     leftplusSobelImage[widthStep_ * yf + width_ - 1 - xf]) /
                         2
                   : leftplusCenterValue;
-          int leftHalfRightValue =
+          int leftplusHalfRightValue =
               xPlus < width_ - 1
                   ? (leftplusCenterValue +
-                     leftplusSobelImage[widthStep_ * yPlus + width_ -
-                                        (xPlus + 1) - 1]) /
+                     leftplusSobelImage[widthStep_ * yb + width_ - 1 - xb]) /
                         2
                   : leftplusCenterValue;
           int leftplusMinValue =
-              std::min(leftHalfLeftValue, leftHalfRightValue);
+              std::min(leftplusHalfLeftValue, leftplusHalfRightValue);
           leftplusMinValue = std::min(leftplusMinValue, leftplusCenterValue);
           int leftplusMaxValue =
-              std::min(leftHalfLeftValue, leftHalfRightValue);
+              std::max(leftplusHalfLeftValue, leftplusHalfRightValue);
           leftplusMaxValue = std::max(leftplusMaxValue, leftplusCenterValue);
 
           int costLtoR = std::max(0, leftCenterValue - leftplusMaxValue);
@@ -956,30 +772,28 @@ void SGMFlow::calcPixelwiseSADHamming(
           int costValue = std::min(costLtoR, costRtoL);
           pixelwiseCostRow_[vzratioTotal_ * x + wp] = costValue;
           addPixelwiseHamming(leftCensusRow, leftplusCensusRow, leftCensusImage,
-                              leftplusCensusImage, false, x, xPlus, yPlus, wp);
-          // if (wp == 128) {
-          //   std::cout << "wp = " << wp << "///costValue: " << costValue
-          //             << std::endl;
-          //   cv::waitKey(0);
-          //}
+                              leftplusCensusImage, true, x, xPlus, yPlus, wp);
+              int a =pixelwiseCostRow_[vzratioTotal_ * x + wp];
+              int b;
         } else {
           if (wp == 0) {
-            pixelwiseCostRow_[vzratioTotal_ * x + wp] = 0;
+            pixelwiseCostRow_[vzratioTotal_ * xPlus] = 15;
+            wp++;
           }
-
-          for (int wpRemains = wp + 1; wpRemains < vzratioTotal_; ++wpRemains) {
-            pixelwiseCostRow_[vzratioTotal_ * x + wpRemains] =
-                pixelwiseCostRow_[vzratioTotal_ * x + wpRemains - 1];
+          for (int wpRemains = wp; wpRemains < vzratioTotal_ - 1; ++wpRemains) {
+            pixelwiseCostRow_[vzratioTotal_ * xPlus + wpRemains] =
+                pixelwiseCostRow_[vzratioTotal_ * xPlus + wpRemains - 1];
           }
+          pixelwiseCostRow_[vzratioTotal_ * xPlus + vzratioTotal_ - 1] = 85;
           break;
-        } //如果这个位置���坐标能在matching图像上面找得到，那么就用，不能找到直接填充
+        }
       }
     }
   } // left cost calc end
   else {
     int yPlus = yIndex;
     for (int xPlus = 0; xPlus < width_; ++xPlus) {
-      //这个for是从leftPlus开始计算了
+      //这个for是�����leftPlus开始计算���������
       int leftplusCenterValue =
           leftplusSobelImage[widthStep_ * yPlus + width_ - xPlus - 1];
       int leftHalfLeftValue =
@@ -998,7 +812,7 @@ void SGMFlow::calcPixelwiseSADHamming(
               : leftplusCenterValue;
       int leftplusMinValue = std::min(leftHalfLeftValue, leftHalfRightValue);
       leftplusMinValue = std::min(leftplusMinValue, leftplusCenterValue);
-      int leftplusMaxValue = std::min(leftHalfLeftValue, leftHalfRightValue);
+      int leftplusMaxValue = std::max(leftHalfLeftValue, leftHalfRightValue);
       leftplusMaxValue = std::max(leftplusMaxValue, leftplusCenterValue);
       for (int wp = 0; wp <= vzratioTotal_; ++wp) {
         double uwTransX, uwTransY;
@@ -1008,17 +822,20 @@ void SGMFlow::calcPixelwiseSADHamming(
                     wx_inv * yPlus * yPlus / f);
         double distancePEpi = sqrt(pow(xPlus + uwTransX - epipoleX, 2) +
                                    pow(yPlus + uwTransY - epipoleY, 2));
-        double distanceRRhat =
-            distancePEpi * wp * (vMax / n) / (1 - wp * (vMax / n));
+        // double distanceRRhat = distancePEpi * wp * (vMax / vzratioTotal_) /(1
+        // - wp * (vMax / vzratioTotal_));
+        double distanceRRhat = fabs(distancePEpi * wp * (vMax / vzratioTotal_) /
+                                    (1 - wp * (vMax / vzratioTotal_)));
         //这个是计算的时候应该是朝着极点走的。
         double directionX = epipoleX - xPlus;
         double directionY = epipoleY - yPlus;
-        directionX = directionX / sqrt(pow(directionX, 2) + pow(directionY, 2));
-        directionY = directionY / sqrt(pow(directionX, 2) + pow(directionY, 2));
+        double length = sqrt(pow(directionX, 2) + pow(directionY, 2));
+        directionX = directionX / length;
+        directionY = directionY / length;
         int x = xPlus + uwTransX + directionX * distanceRRhat;
         int y = xPlus + uwTransY + directionY * distanceRRhat;
 
-        if (x >= 0 && y >= 0 && x <= width_ && y <= height_) {
+        if (x >= 0 && y >= 0 && x < width_ && y < height_) {
           int leftCenterValue = leftSobelImage[widthStep_ * y + x];
           int leftHalfLeftValue =
               x > 0 ? (leftCenterValue + leftSobelRow[x - 1]) / 2
@@ -1028,7 +845,7 @@ void SGMFlow::calcPixelwiseSADHamming(
                              : leftCenterValue;
           int leftMinValue = std::min(leftHalfLeftValue, leftHalfRightValue);
           leftMinValue = std::min(leftMinValue, leftCenterValue);
-          int leftMaxValue = std::min(leftHalfLeftValue, leftHalfRightValue);
+          int leftMaxValue = std::max(leftHalfLeftValue, leftHalfRightValue);
           leftMaxValue = std::max(leftMaxValue, leftCenterValue);
 
           int costLtoR = std::max(0, leftCenterValue - leftplusMaxValue);
@@ -1039,12 +856,17 @@ void SGMFlow::calcPixelwiseSADHamming(
           pixelwiseCostRow_[vzratioTotal_ * xPlus + wp] = costValue;
           addPixelwiseHamming(leftCensusRow, leftplusCensusRow, leftCensusImage,
                               leftplusCensusImage, false, xPlus, x, y, wp);
-          //这个位置的变量名字需要改变了
+
         } else {
           if (wp == 0) {
-            pixelwiseCostRow_[vzratioTotal_ * xPlus + wp] = 0;
+            pixelwiseCostRow_[vzratioTotal_ * xPlus] = 255;
+            pixelwiseCostRow_[vzratioTotal_ * xPlus + 1] = 0;
+            for (int wpRemains = 2; wpRemains < vzratioTotal_; ++wpRemains) {
+              pixelwiseCostRow_[vzratioTotal_ * xPlus + wpRemains] =
+                  pixelwiseCostRow_[vzratioTotal_ * xPlus + wpRemains - 1];
+            }
           }
-          for (int wpRemains = wp + 1; wpRemains < vzratioTotal_; ++wpRemains) {
+          for (int wpRemains = wp; wpRemains < vzratioTotal_; ++wpRemains) {
             pixelwiseCostRow_[vzratioTotal_ * xPlus + wpRemains] =
                 pixelwiseCostRow_[vzratioTotal_ * xPlus + wpRemains - 1];
           }
@@ -1077,8 +899,9 @@ void SGMFlow::addPixelwiseHamming(const int *leftCensusRow,
   pixelwiseCostRow_[vzratioTotal_ * xBase + wp] +=
       static_cast<unsigned char>(hammingDistance * censusWeightFactor_);
   //这里不再写hamming distance
-  // cost逐个像素填充的原因是，如果找不到对应点，那也没有参考的
-  // distance 能够填充，如果有的话，计算sad的时候是逐个点计算完之后就计算hamming
+  // cost逐个像素填充的原因是�����������������������如���找不到对应点，那也没有参考���
+  // distance
+  // 能够填充���如果有的话，计算sad的时候是逐个点计算完之后就计算hamming
   //所以和前面的的一样的话，也相当于填充了
 }
 
@@ -1107,7 +930,6 @@ void SGMFlow::computeLeftPlusCostImage() {
 
 void SGMFlow::performSGM(unsigned short *costImage,
                          unsigned short *vzratioImage) {
-  std::cout << "铭记于心年轻人，大地母亲就在你身旁..." << std::endl;
   const short costMax = SHRT_MAX;
   //因为SGM那篇文章里面介绍了Aggregation cost是有最大值的。
   int widthStepCostImage = width_ * vzratioTotal_;
@@ -1149,9 +971,9 @@ void SGMFlow::performSGM(unsigned short *costImage,
 
       memset(pathCosts[i] - pathVZratioSize_ - 8, 0,
              pathCostBufferSize_ * sizeof(short));
-      //这里之所以减去是为了应对下面的负数偏移
-      //所以这里剪完之后，从pathCosts[i] = costSums +
-      // costSumBufferSize_开始，一大块内存全是0
+      //这里之所以减去是为了应对下面的负���偏���
+      //所以���里剪完之后，从pathCosts[i] = costSums +
+      // costSumBufferSize_开���，������块内存全是0
       pathMinCosts[i] = costSums + costSumBufferSize_ +
                         pathCostBufferSize_ * pathRowBufferTotal_ +
                         pathMinCostBufferSize_ * i + pathTotal_ * 2;
@@ -1178,26 +1000,27 @@ void SGMFlow::performSGM(unsigned short *costImage,
       memset(pathMinCosts[0] - pathTotal_, 0, pathTotal_ * sizeof(short));
       memset(pathMinCosts[0] + width_ * pathTotal_, 0,
              pathTotal_ * sizeof(short));
-      //这里的初始化也非常的简单，就是按位置来进行初始化，都初始化为0，两两为一组，
-      //一组里面的值都是对应的两个部分，从计算的空间，和从右下计算的空间。
+      //这里的初始化也非常的简单，就是按位置来进行初始化，都初始化为0，两两为�����组，
+      //一组里面的值都是对应的两个部分，从�����算的空间，和从���下计算���空间�����
       for (int x = startX; x != endX; x += stepX) {
         int pathMinX =
-            x * pathTotal_; //这里表示的是点的位置x8条path位置（偏移量）
+            x * pathTotal_; //这里表示的是点的位置x8条path位置����������移量）
         int pathX =
             pathMinX * vzratioSize_; //点的位置x8条pathx所有的视差等级（偏移量）
         int previousPathMin0 = pathMinCosts[0][pathMinX - stepX * pathTotal_] +
                                smoothnessPenaltyLarge_;
-        //上面初始化的时候-pathTotal_所以把stepX * pathTotal_这个位置给让出来了
+        //上面初始化的时候-pathTotal_所以把stepX *
+        // pathTotal_�������个位置������出来了
         //这句话的意思是，将之前的最小的path的最小的cost拿出来加上一个大的平滑惩罚，
-        //为什么默认在这个位置是视差等级查1个以上的的位置
+        //为什么默认在���个位置是视差等级查1个以上的的位置
         int previousPathMin2 =
             pathMinCosts[1][pathMinX + 2] + smoothnessPenaltyLarge_;
-        //注意这两个变量不是指针了，已经是整形的数值了
+        //���意这两个变量不是指针了，已经是整形的数值了
         //这手看着贼迷乱
         short *previousPathCosts0 =
             pathCosts[0] + pathX - stepX * pathVZratioSize_;
         short *previousPathCosts2 = pathCosts[1] + pathX + vzratioSize_ * 2;
-        //下面这一句是在，第一个起始点的位置，都放上最大的cost
+        //下面���一���是���，���一���起���点���位���，�����������放���最���的cost
         previousPathCosts0[-1] = previousPathCosts0[vzratioTotal_] = costMax;
         previousPathCosts2[-1] = previousPathCosts2[vzratioTotal_] = costMax;
 
@@ -1205,7 +1028,7 @@ void SGMFlow::performSGM(unsigned short *costImage,
         const unsigned short *pixelCostCurrent =
             pixelCostRow + vzratioTotal_ * x;
         short *costSumCurrent = costSumRow + vzratioTotal_ * x;
-        // pixelCostRow 指向的是CostImage的起始位置
+        // pixelCostRow 指向的是CostImage的起始位���
         __m128i regPenaltySmall =
             _mm_set1_epi16(static_cast<short>(smoothnessPenaltySmall_));
 
@@ -1230,7 +1053,7 @@ void SGMFlow::performSGM(unsigned short *costImage,
               _mm_adds_epi16(_mm_loadu_si128(reinterpret_cast<const __m128i *>(
                                  previousPathCosts0 + d - 1)),
                              regPenaltySmall));
-          //这里是先将之前的path
+          //这里是先将之前�������������path
           regPathCost0 = _mm_min_epi16(
               regPathCost0,
               _mm_adds_epi16(_mm_loadu_si128(reinterpret_cast<const __m128i *>(
@@ -1246,9 +1069,9 @@ void SGMFlow::performSGM(unsigned short *costImage,
               _mm_adds_epi16(_mm_loadu_si128(reinterpret_cast<const __m128i *>(
                                  previousPathCosts2 + d + 1)),
                              regPenaltySmall));
-          // regPathMin0为之前path最小的cost，现在
+          // regPathMin0为之前path最小的cost，���������在
           regPathCost0 = _mm_min_epi16(regPathCost0, regPathMin0);
-          //因为path本身是不重要的，而在每一步取的最小的值是最重要的，所以而且他在遍历这个视差的时候
+          //因为path本身是不重要的���而在每一步取的最小的值是最重要的，所以而且他在遍历这个视差的时候
           //相当于是站在一个点处，去寻找这个点处，对应最小cost的视差���������级。
           //因为这个还是逐行处理的
           regPathCost0 = _mm_adds_epi16(
@@ -1264,25 +1087,25 @@ void SGMFlow::performSGM(unsigned short *costImage,
           _mm_store_si128(reinterpret_cast<__m128i *>(pathCostCurrent + d +
                                                       vzratioSize_ * 2),
                           regPathCost2);
-          //上面这两行���将计算的path的cost，���储���相应的内存位�����处。
+          //上面这两������将计算的path的cost，���储���相应的内存位���������������
           __m128i regMin02 =
               _mm_min_epi16(_mm_unpacklo_epi16(regPathCost0, regPathCost2),
                             _mm_unpackhi_epi16(regPathCost0, regPathCost2));
           // extern __m128i _mm_unpacklo_epi16(__m128i _A, __m128i _B);
-          //返回一个__m128i的寄存器，它将寄存器_A和寄存器_B的低64bit数以32bit为单位交织在一块。
+          //返回一个__m128i������������������������������������������存器，它将寄存器_A和寄存���_B的低64bit数以32bit为单位交织在一块。
           //例如，_A=(_A0,_A1,_A2,_A3,_A4,_A5,_A6,_A7),_B=(_B0,_B1,_B2,_B3,_B4,_B5,_B6,_B7),
           //其中_Ai,_Bi为16bit整数，_A0,_B0为低位，返回结果为(_A0,_A1,_B0,_B1,_A2,_A3,_B2,_B3),
           // r0=_A0, r1=_B0, r2=_A1, r3=_B1
           // extern __m128i _mm_unpackhi_epi16(__m128i _A, __m128i _B);
           //返回一个__m128i的寄存器，它将寄存器_A和寄存器_B的高64bit数以32bit为单位交织在一块。
           //例如，_A=(_A0,_A1,_A2,_A3,_A4,_A5,_A6,_A7),_B=(_B0,_B1,_B2,_B3,_B4,_B5,_B6,_B7),
-          //其中_Ai,_Bi为16bit整数，_A0,_B0为低位，返回结果为(_A4,_A5,_B4,_B5,_A6,_A7,_B6,_B7),
+          //其中_Ai,_Bi为16bit整数，_A0,_B0为低位，返回结果���(_A4,_A5,_B4,_B5,_A6,_A7,_B6,_B7),
           // r0=_A2, r1=_B2, r2=_A3, r3=_B3
           //
-          // 我个人认为这个0和2
-          // 所做的事情是一模一样的，他在计算的时候第一遍这个东西讲道理应该是没什么用的
-          // 因为他的初始值都是一样的，所以计算出来的东西也应该都是一样的，看她把值存储在了从右下角位置开始
-          // 的内存位置，应该是说他第二遍从右下脚开始计算的时候没准会用到2的结果。
+          // 我个人认���这个0和2
+          // �������做的事情是一模一样的，他在计��������时������一遍这���东西讲道理应该是没什么用的
+          // 因���他的初始值都是一样的，所以计算出来的东西也应该都是一样的，看她把值存储在了从右下角位置开始
+          // 的内存位置，应该是说他第二遍从右下脚开始计算的时候没准会用到2的结���。
           regMin02 = _mm_min_epi16(_mm_unpacklo_epi16(regMin02, regMin02),
                                    _mm_unpackhi_epi16(regMin02, regMin02));
           regNewPathMin = _mm_min_epi16(regNewPathMin, regMin02);
@@ -1303,8 +1126,9 @@ void SGMFlow::performSGM(unsigned short *costImage,
             reinterpret_cast<__m128i *>(&pathMinCosts[0][pathMinX]),
             regNewPathMin);
         // extern __m128i _mm_srli_si128(__m128i _A, int _Imm);
-        //返回一个__m128i的寄存器，将寄存器_A中的8个16bit整数按照_Count进行相同的逻辑右移，
-        //移位填充值为0,r0=srl(_A0, _Count), r1=srl(_A1, _Count), ...
+        //返回一个__m128i的寄存器，将���存���_A中���8个16bit整���按照_Count���行相�����的逻辑右���，
+        //移�������填�����值���������0,r0=srl(_A0, _Count), r1=srl(_A1, _Count),
+        //...
         // r7=srl(_A7, _Count),
         // shifting in zeros
       }

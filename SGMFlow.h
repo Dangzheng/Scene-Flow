@@ -24,6 +24,7 @@ public:
                const png::image<png::rgb_pixel> &leftplusImage,
                float *vzratioImage, std::string leftImageFilename,
                std::string leftplusImageFilename);
+  // add by Dangzheng
 
 private:
   void initialize(const png::image<png::rgb_pixel> &leftImage,
@@ -117,15 +118,14 @@ private:
   // add by Dangzheng
   void calcEpipoleRotaionVector(std::string leftImageFilename,
                                 std::string leftplusImageFilename);
-  bool interscetion(cv::Point2f &inter_pt, cv::Point2f o1, cv::Point2f p1,
-                    cv::Point2f o2, cv::Point2f p2);
+
   double wx_t;
   double wy_t;
   double wz_t;
   double wx_inv;
   double wy_inv;
   double wz_inv;
-  double f = 721.53770;
+  double f = 707.091200;
   double epipoleX;
   double epipoleY;
 

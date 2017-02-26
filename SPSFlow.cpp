@@ -154,7 +154,7 @@ void SPSFlow::setInputData(const png::image<png::rgb_pixel> &leftImage,
                            const png::image<png::rgb_pixel> &leftplusImage,
                            std::string leftImageFilename,
                            std::string leftplusImageFilename) {
-  setLabImage(leftImage);
+  // setLabImage(leftImage);
   //如果是图片的预处理步骤的话为什么只针对左图进行处理呢？
   computeInitialVZratioImage(leftImage, leftplusImage, leftImageFilename,
                              leftplusImageFilename);
@@ -221,7 +221,6 @@ void SPSFlow::computeInitialVZratioImage(
     const png::image<png::rgb_pixel> &leftplusImage,
     std::string leftImageFilename, std::string leftplusImageFilename) {
   SGMFlow sgm;
-  sgm.setVZRatioTotal(128);
   sgm.compute(leftImage, leftplusImage, initialVZratioImage_, leftImageFilename,
               leftplusImageFilename);
 }

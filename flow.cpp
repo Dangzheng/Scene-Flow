@@ -19,7 +19,7 @@ int main(int argc, char *argv[]) {
     std::cerr << "usage: ./flow left_0 left_1" << std::endl;
     exit(1);
   }
-  std::cout << "今晚要上演的是：一幕沉重的悲剧..." << std::endl;
+  std::cout << "..." << std::endl;
   std::string leftImageFilename = argv[1];
   std::string leftplusImageFilename = argv[2];
   // SPSFlow部分
@@ -28,7 +28,7 @@ int main(int argc, char *argv[]) {
 
   SPSFlow flow;
   //首先确认参数设置正确。
-  flow.setOutputVZRatio(128);
+  // flow.setOutputVZRatio(256);
   flow.setIterationTotal(outerIterationTotal, innerIterationTotal);
   flow.setWeightParameter(lambda_pos, lambda_depth, lambda_bou, lambda_smo);
   flow.setInlierThreshold(lambda_d);
