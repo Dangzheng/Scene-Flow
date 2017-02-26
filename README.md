@@ -35,5 +35,6 @@ matlab tools contains parameters estimation part, C++ code calculate rotation ve
 * output image
 ![out](out.png)
 
-
+* terminal display (if all settings are correct, terminal output will looks like this.)
+![display](display.png)
 
